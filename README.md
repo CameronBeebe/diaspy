@@ -293,6 +293,6 @@ pytest
 
 ## Copyright
 
-Copyright (c) 2023 The SciPhi Initiative, LLC. All rights reserved.
+Copyright (c) 2025 The SciPhi Initiative, LLC. All rights reserved.
 
 This package is proprietary and not licensed for external use without permission. 
