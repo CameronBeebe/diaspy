@@ -1,3 +1,5 @@
+[Pair coded prototype with grok, minimum functionality and testing -CB]
+
 # Masterpiece DSPy Script with Grok
 
 This project contains a Python script that demonstrates a novel multi-agent dialectic workflow using DSPy with xAI's Grok model. The script creates an optimized program for generating witty, truthful responses to user queries through a thesis-antithesis-synthesis process, inspired by Grok's personality and Hegelian dialectics.
