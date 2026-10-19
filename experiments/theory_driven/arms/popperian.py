@@ -225,7 +225,13 @@ class PopperianProposer:
                 if ok:
                     break
             
-            out[name] = new  # If it never survived, GEPA's acceptance will reject it
+            # Return new instruction if it survived, otherwise return old instruction
+            # This rejects failing rewrites immediately instead of letting GEPA test them
+            if ok:
+                out[name] = new
+            else:
+                # Keep parent instruction - reject the failing rewrite
+                out[name] = self.program.predictors()[name].signature.instructions
         
         return out
 
