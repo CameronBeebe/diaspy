@@ -319,7 +319,7 @@ class ExperimentConfig:
                 budgets=[50],
                 n_seeds=1,
                 test_size=self.smoke_test_size,
-                benchmarks=["hover"],
+                benchmarks=["simple_qa"],  # Use simple_qa for smoke test
                 arms=["A", "B"],  # GEPA default + Popperian only for slim core
                 models=[free_model],  # Use free model for stage 0
                 requires_stage_gate=True,

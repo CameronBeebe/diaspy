@@ -22,7 +22,7 @@ from .arms import (
     PopperianArm,
     BayesianPopperianArm,
 )
-from .benchmarks import BaseBenchmark, HoVerBenchmark, PUPABenchmark
+from .benchmarks import BaseBenchmark, HoVerBenchmark, PUPABenchmark, SimpleQABenchmark
 
 
 class ExperimentHarness:
