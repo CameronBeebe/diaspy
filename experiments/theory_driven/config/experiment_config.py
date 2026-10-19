@@ -65,27 +65,55 @@ class ModelConfig:
             max_cost_dollars=float(os.getenv("MAX_COST_DOLLARS", "5.0")),
         )
     
-    def get_litellm_kwargs(self, model: str) -> Dict[str, Any]:
-        """Get LiteLLM kwargs for a model, including reasoning control.
+    def get_litellm_kwargs(
+        self,
+        model: str,
+        pin_provider: bool = True,
+        provider_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get LiteLLM kwargs for a model, including reasoning control and provider pinning.
         
         Per OpenRouter docs: pass reasoning=False via extra_body for models
         that support reasoning/thinking tokens (Qwen3.5, etc).
         
         Per xAI docs: pass reasoning_effort='none' for Grok models.
         
+        Provider pinning (OpenRouter): Set provider.order and provider.allow_fallbacks
+        to ensure consistent routing and prevent silent fallbacks.
+        
         Args:
             model: Model string (e.g., 'openrouter/qwen/qwen3.5-9b')
+            pin_provider: Whether to pin provider routing (recommended for reproducibility)
+            provider_name: Specific provider to pin (e.g., 'OpenAI', 'Together', 'Fireworks')
+                          If None, lets OpenRouter choose but disables fallbacks
             
         Returns:
             Dictionary of kwargs for LiteLLM
         """
         kwargs = {}
+        extra_body = {}
         
         # OpenRouter reasoning control
         if "openrouter/" in model and not self.enable_reasoning:
             # OpenRouter: pass reasoning parameter via extra_body
             # This disables thinking/reasoning tokens for models that support them
-            kwargs["extra_body"] = {"reasoning": False}
+            extra_body["reasoning"] = False
+        
+        # OpenRouter provider pinning
+        if "openrouter/" in model and pin_provider:
+            provider_config = {
+                "allow_fallbacks": False,  # Fail instead of falling back
+                "require_parameters": True,  # Require our params to be respected
+            }
+            
+            if provider_name:
+                # Pin to specific provider
+                provider_config["order"] = [provider_name]
+            
+            extra_body["provider"] = provider_config
+        
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         
         # xAI Grok reasoning effort
         if "xai/grok" in model or "grok-" in model:
@@ -135,6 +163,11 @@ class StageConfig:
     # Stage gate requirements
     requires_stage_gate: bool = False
     required_checks: List[str] = field(default_factory=list)
+    
+    # Canary suite for drift detection
+    run_canary: bool = True
+    canary_model: Optional[str] = None  # Model for canaries (can use free tier for smoke)
+    allow_canary_drift: bool = False  # If False, stage blocks on drift detection
 
 
 @dataclass
@@ -274,6 +307,10 @@ class ExperimentConfig:
         Stage 2 (cross-model): $25 cap, same as pilot but 2-3 models
         """
         if stage_id == 0:
+            # Stage 0 can use free-tier model for canary
+            # WARNING: Free providers may log prompts and change without notice
+            canary_model = "openrouter/google/gemma-2-9b-it:free"
+            
             return StageConfig(
                 stage_id=0,
                 name="smoke",
@@ -292,7 +329,11 @@ class ExperimentConfig:
                     "results_populated",
                     "dashboard_accessible",
                     "metrics_parse",
+                    "canary_no_drift",  # Canary check required
                 ],
+                run_canary=True,
+                canary_model=canary_model,
+                allow_canary_drift=False,  # Block on drift
             )
         elif stage_id == 1:
             return StageConfig(
@@ -308,6 +349,9 @@ class ExperimentConfig:
                 models=[self.model_config.task_model],
                 requires_stage_gate=False,
                 required_checks=[],
+                run_canary=True,
+                canary_model=self.model_config.task_model,  # Use paid model
+                allow_canary_drift=False,  # Block on drift
             )
         elif stage_id == 2:
             # Cross-model: test on 2-3 cheap models
@@ -335,6 +379,9 @@ class ExperimentConfig:
                 models=models,
                 requires_stage_gate=False,
                 required_checks=[],
+                run_canary=True,
+                canary_model=None,  # Will run canaries for each model
+                allow_canary_drift=True,  # Allow drift (comparing different models)
             )
         else:
             raise ValueError(f"Unknown stage_id: {stage_id}")

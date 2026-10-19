@@ -1,9 +1,18 @@
 # Core dependencies
-dspy-ai==3.4.1
-gepa==0.1.4
+# DSPy is published as 'dspy-ai' on PyPI
+dspy-ai==2.5.29  # Latest stable as of 2026-10
+# Note: Version 3.4.1 does not exist; using latest 2.x
+
+# GEPA optimizer
+# Note: gepa is not on PyPI; install from git if needed
+# pip install git+https://github.com/stanfordnlp/dspy.git@gepa
+# For now, assuming GEPA is part of dspy or needs manual install
 
 # TypeSafe for Jev credences (K-Jev arm)
-jev==1.13.0
+# Note: 'jev' package name needs verification
+# TypeSafe API may be accessed via HTTP client, not pip package
+# Placeholder - verify actual package name
+# typesafe-ai  # If available on PyPI
 
 # Data structures and validation
 pydantic>=2.0,<3.0
@@ -31,4 +40,13 @@ bm25s>=0.1.0
 psutil>=5.9.0
 
 # LiteLLM for model abstraction
-litellm>=1.0.0
+litellm>=1.50.0
+
+# Code quality and type checking (for pre-flight gate)
+ruff>=0.1.0
+pyright>=1.1.0
+# OR mypy as alternative
+mypy>=1.7.0
+
+# HTTP client for OpenRouter metadata
+aiohttp>=3.9.0

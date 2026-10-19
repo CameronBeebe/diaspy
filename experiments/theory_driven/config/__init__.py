@@ -9,6 +9,8 @@ from .experiment_config import (
 )
 from .budget_tracker import BudgetTracker, BudgetEnforcer, CostLimitExceeded
 from .stage_gate import StageGate, StageGateStatus, CheckResult, SmokeTestChecks
+from .provenance import ProvenanceLogger, LMCallTrace, fetch_openrouter_generation_metadata, reconcile_costs
+from .canary import CanarySuite, CanaryPrompt, CanaryResult
 
 __all__ = [
     "ExperimentConfig",
@@ -23,4 +25,11 @@ __all__ = [
     "StageGateStatus",
     "CheckResult",
     "SmokeTestChecks",
+    "ProvenanceLogger",
+    "LMCallTrace",
+    "fetch_openrouter_generation_metadata",
+    "reconcile_costs",
+    "CanarySuite",
+    "CanaryPrompt",
+    "CanaryResult",
 ]
