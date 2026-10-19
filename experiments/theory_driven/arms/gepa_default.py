@@ -44,25 +44,38 @@ class GEPADefaultArm(BaseArm):
         metric: Callable,
         trainset: list,
         valset: list,
+        task_lm=None,
+        reflection_lm=None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile with GEPA default.
         
         Per spec: GEPA can overshoot by one iteration when using stop_callbacks.
         The budget tracker is passed as a stop callback to halt when budget exhausted.
+        
+        Args:
+            program: DSPy program to optimize
+            metric: Metric function
+            trainset: Training examples
+            valset: Validation examples
+            task_lm: Task language model (optional, uses dspy.settings.lm if not provided)
+            reflection_lm: Reflection language model (required by GEPA)
+            **compile_kwargs: Additional compile arguments
         """
+        # GEPA requires a reflection_lm
+        if reflection_lm is None:
+            reflection_lm = dspy.settings.lm
+        
         # Create GEPA optimizer with budget tracker as stop callback
         gepa = dspy.GEPA(
             metric=metric,
+            reflection_lm=reflection_lm,
             max_metric_calls=self.max_metric_calls,
             reflection_minibatch_size=self.reflection_minibatch_size,
             use_merge=self.use_merge,
             seed=self.seed,
             track_stats=True,
-            gepa_kwargs={
-                "stop_callbacks": [self.budget_tracker],
-                **self.kwargs
-            }
+            stop_callbacks=[self.budget_tracker],
         )
         
         # Compile

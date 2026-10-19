@@ -5,7 +5,7 @@ description = "A DSPy-based package for multi-LLM dialectical workflows, solving
 authors = [{ name = "The SciPhi Initiative, LLC" }]
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["dspy-ai"]
+dependencies = ["dspy>=3.4.1"]
 license = { text = "Copyright (c) 2023 The SciPhi Initiative, LLC. All rights reserved." }
 
 [project.scripts]

@@ -18,11 +18,10 @@ import sys
 import os
 from pathlib import Path
 
-from config import ExperimentConfig, StageGate, SmokeTestChecks, CanarySuite
-from harness import ExperimentHarness
-from preflight import PreFlightGate
+from .config import ExperimentConfig, StageGate, SmokeTestChecks, CanarySuite
+from .harness import ExperimentHarness
+from .preflight import PreFlightGate
 import dspy
-import os
 
 
 def run_canary_suite(
@@ -137,16 +136,16 @@ def run_canary_suite(
         return True
         
     except Exception as e:
-        print(f"\n⚠ Canary suite failed: {e}")
-        # Don't block on canary failure for now
+        print(f"\n✗ Canary suite FAILED: {e}")
+        # Treat exceptions as failures (was incorrectly passing before)
         gate.record_check(
             stage_id=stage_config.stage_id,
             check_name="canary_no_drift",
-            passed=True,
-            message=f"Canary suite error (non-blocking): {str(e)}",
+            passed=False,
+            message=f"Canary suite error: {str(e)}",
             metadata={"error": str(e)}
         )
-        return True
+        return False
 
 
 def run_preflight_gate(stage_id: int, experiment_dir: Path) -> bool:
