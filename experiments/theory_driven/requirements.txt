@@ -1,0 +1,41 @@
+# Core dependencies
+dspy==3.4.1
+gepa==0.1.4
+
+# TypeSafe/Jev is in dspy.experimental (no separate package)
+
+# Data structures and validation
+pydantic>=2.0,<3.0
+
+# Analysis
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Testing
+pytest>=7.0.0
+pytest-timeout>=2.1.0
+pytest-socket>=0.7.0
+
+# Dashboard and notebooks
+mlflow>=2.8.0
+jupyter>=1.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pandas>=2.0.0
+
+# HotpotQA distractor dataset and per-question retrieval
+rank_bm25>=0.2.2
+datasets>=3.0.0
+
+# Optional: Memory monitoring
+psutil>=5.9.0
+
+# LiteLLM for model abstraction
+litellm>=1.50.0
+
+# Code quality and type checking (for pre-flight gate)
+ruff>=0.1.0
+pyright>=1.1.0
+
+# HTTP client for OpenRouter metadata
+aiohttp>=3.9.0

@@ -5,7 +5,7 @@ description = "A DSPy-based package for multi-LLM dialectical workflows, solving
 authors = [{ name = "The SciPhi Initiative, LLC" }]
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["dspy-ai"]
+dependencies = ["dspy>=3.4.1"]
 license = { text = "Copyright (c) 2023 The SciPhi Initiative, LLC. All rights reserved." }
 
 [project.scripts]
@@ -23,6 +23,16 @@ version = "0.1.0"
 description = "A DSPy-based package for multi-LLM dialectical workflows, solving the AI management problem through philosophically inspired agent interactions."
 authors = ["The SciPhi Initiative, LLC"]
 readme = "README.md"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
