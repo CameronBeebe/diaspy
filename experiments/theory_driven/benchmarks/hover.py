@@ -84,7 +84,7 @@ class HoVerBenchmark(BaseBenchmark):
             for i in range(1000)  # Enough for any split
         ]
         
-        random.seed(42)
+        random.seed(seed)  # Use passed seed, not hard-coded 42
         random.shuffle(dummy_data)
         
         # Create splits

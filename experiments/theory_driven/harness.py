@@ -243,8 +243,9 @@ class ExperimentHarness:
                 "message": setup_msg,
             }
         
-        # Load data
+        # Load data with seed for reproducibility
         trainset, valset, testset = benchmark.load_data(
+            seed=seed,  # Pass seed to get different splits per run
             train_size=self.config.train_size,
             val_size=self.config.val_size,
             test_size=test_size,

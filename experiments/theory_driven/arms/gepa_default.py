@@ -67,13 +67,14 @@ class GEPADefaultArm(BaseArm):
             reflection_lm = dspy.settings.lm
         
         # Create GEPA optimizer with budget tracker as stop callback
+        # Note: max_metric_calls should equal budget, not hard-coded 200
         gepa = dspy.GEPA(
             metric=metric,
             reflection_lm=reflection_lm,
-            max_metric_calls=self.max_metric_calls,
+            max_metric_calls=self.budget_tracker.max_units,  # Use budget, not hard-coded value
             reflection_minibatch_size=self.reflection_minibatch_size,
             use_merge=self.use_merge,
-            seed=self.seed,
+            seed=self.seed,  # Pass seed to GEPA
             track_stats=True,
             stop_callbacks=[self.budget_tracker],
         )
