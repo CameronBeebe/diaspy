@@ -1,0 +1,34 @@
+# Core dependencies
+dspy-ai==3.4.1
+gepa==0.1.4
+
+# TypeSafe for Jev credences (K-Jev arm)
+jev==1.13.0
+
+# Data structures and validation
+pydantic>=2.0,<3.0
+
+# Analysis
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Dashboard and notebooks
+mlflow>=2.8.0
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pandas>=2.0.0
+
+# Retrieval for HoVer
+bm25s>=0.1.0
+
+# Optional: Memory monitoring
+psutil>=5.9.0
+
+# LiteLLM for model abstraction
+litellm>=1.0.0
