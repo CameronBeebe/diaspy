@@ -330,7 +330,7 @@ class ExperimentHarness:
             "budget_stats": budget_tracker.get_stats(),
             "arm_stats": arm.get_stats(),
             "test_scores": test_scores,
-            "test_mean": sum(test_scores) / len(test_scores) if test_scores else 0.0,
+            "test_mean": sum(test_scores) / len(test_scores) if test_scores else (None if status == "error" else 0.0),
             "timestamp": datetime.utcnow().isoformat(),
         }
         
