@@ -20,17 +20,27 @@ def test_runner_has_offline_dependency_injection():
     assert callable(getattr(run_staged, "run_stage0", None))
 
 
-def scripted_lms():
+def scripted_lms(millian=False):
     task = DummyLM([{"answer": "deliberately incorrect"}] * 300)
     # Stock DSPy GEPA uses JSONAdapter for its new_instruction field.
     reflection = DummyLM([{"new_instruction": "Answer concisely using the retrieved evidence."}] * 100,
                          adapter=dspy.JSONAdapter())
     refutations = [{"claim": "Answer unsupported by evidence", "counterexample_ids": [0],
                     "severity": 1.0, "proposed_fix": "Read the supporting paragraphs"}]
-    critic = DummyLM([item for _ in range(100) for item in (
+    round_answers = [
         {"refutations": refutations},
         {"new_instruction": "Use supporting paragraphs; output only the answer."},
-    )])
+    ]
+    if millian:
+        round_answers = [
+            {"refutations": refutations},
+            {"rebuttals": [{"refutation_index": 0, "stance": "concede",
+                            "argument": "Address the observed error", "protected_ids": []}]},
+            {"new_instruction": "Use supporting paragraphs; output only the answer."},
+            {"new_instruction": "Use evidence while preserving correct answers.",
+             "rejected_refutations": "None; objection conceded."},
+        ]
+    critic = DummyLM(round_answers * 100)
     return {"task": task, "reflection": reflection, "critic": critic}
 
 
@@ -49,13 +59,13 @@ def tiny_run(tmp_path, caplog, monkeypatch):
                               results_dir=str(tmp_path))
     for arm in config.arms:
         arm.kwargs.update(reflection_minibatch_size=1)
-        if arm.name == "B":
+        if arm.name in {"B", "M"}:
             arm.kwargs["max_attempts"] = 1
     fixture = Path(__file__).parent / "fixtures" / "hotpotqa.json"
     runs = []
 
     def factory(model_config, seed):
-        lms = scripted_lms()
+        lms = scripted_lms(millian=len(runs) == 2)
         runs.append(lms)
         return lms
 
@@ -71,9 +81,9 @@ def tiny_run(tmp_path, caplog, monkeypatch):
     return results, runs
 
 
-def test_both_arms_complete_and_account_for_test_evaluation(tiny_run):
+def test_all_three_arms_complete_and_account_for_test_evaluation(tiny_run):
     results, runs = tiny_run
-    assert [r["arm"] for r in results] == ["A", "B"]
+    assert [r["arm"] for r in results] == ["A", "B", "M"]
     for result, lms in zip(results, runs, strict=True):
         assert result["status"] == "success", result
         assert result["test_size"] == len(result["test_scores"]) == 1
@@ -95,18 +105,36 @@ def test_both_arms_complete_and_account_for_test_evaluation(tiny_run):
         assert events[0]["event_type"] == "initialization"
         assert events[-1]["event_type"] == "finalization"
         proposals = [event for event in events if event["event_type"] == "optimization_step"]
+        if result["arm"] == "M":
+            assert len(proposals) == len(result["arm_stats"]["proposer_log"])
+            assert proposals
+            for event in proposals:
+                debate = event["metadata"]["debate"]
+                assert debate["policy"] == "majority"
+                assert debate["received_view_survived"]
+                assert debate["role_calls"]["defender"] == 1
+                assert debate["calls_consumed"] == sum(debate["role_calls"].values())
+                prosecution = debate["prosecution"]["evidence"]
+                millian = debate["millian"]["evidence"]
+                assert [(row["question"], row["role"], row["parent_score"]) for row in prosecution] == [
+                    (row["question"], row["role"], row["parent_score"]) for row in millian]
         if result["arm"] == "B":
+            assert result["survival_policy"] == "majority"
             assert len(proposals) == len(result["arm_stats"]["proposer_log"])
             assert all(not event["step"]["decision"]["accepted"] for event in proposals)
 
 
 def test_arm_patterns_differ_on_same_seed_and_data(tiny_run):
     results, runs = tiny_run
-    a, b = runs
+    a, b, m = runs
     assert len(a["reflection"].history) > 0
     assert len(a["critic"].history) == 0
     assert len(b["reflection"].history) == 0
     assert len(b["critic"].history) > 0
     assert any("refutations" in str(entry["messages"]) for entry in b["critic"].history)
+    assert results[1]["survival_policy"] == "majority"
+    assert results[2]["survival_policy"] == "majority"
+    assert any("rebuttals" in str(entry["messages"]) for entry in m["critic"].history)
+    assert not any("rebuttals" in str(entry["messages"]) for entry in b["critic"].history)
     assert results[1]["arm_stats"]["proposer_log"]
     assert all(not item["survived"] for item in results[1]["arm_stats"]["proposer_log"])

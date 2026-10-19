@@ -14,6 +14,7 @@ from experiments.theory_driven.arms.base import BaseArm
 from experiments.theory_driven.arms.gepa_default import GEPADefaultArm
 from experiments.theory_driven.arms.prose_critic import ProseCriticArm
 from experiments.theory_driven.arms.popperian import PopperianArm
+from experiments.theory_driven.arms.millian import MillianArm
 from experiments.theory_driven.arms.bayesian_popperian import BayesianPopperianArm
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "GEPADefaultArm",
     "ProseCriticArm",
     "PopperianArm",
+    "MillianArm",
     "BayesianPopperianArm",
 ]

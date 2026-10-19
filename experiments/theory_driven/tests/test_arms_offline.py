@@ -7,7 +7,7 @@ from experiments.theory_driven.config.budget_tracker import UnifiedBudget
 from experiments.theory_driven.harness import ExperimentHarness
 
 
-@pytest.mark.parametrize("name", ["A", "B", "C"])
+@pytest.mark.parametrize("name", ["A", "B", "C", "M"])
 def test_seed_and_budget_reach_every_gepa_arm(name, tmp_path):
     lm = DummyLM([{"answer": "unused"}])
     budget = UnifiedBudget(17, 1.0, lm)

@@ -9,7 +9,7 @@ from typing import Any, Callable
 import dspy
 
 from experiments.theory_driven.arms import (
-    BaseArm, GEPADefaultArm, PopperianArm, ProseCriticArm,
+    BaseArm, GEPADefaultArm, PopperianArm, ProseCriticArm, MillianArm,
 )
 from experiments.theory_driven.benchmarks import (
     BaseBenchmark, HotpotQABenchmark, HoVerBenchmark, PUPABenchmark,
@@ -61,16 +61,23 @@ class ExperimentHarness:
         self.canary: dict[str, Any] | None = None
 
     def create_arm(self, arm_name: str, budget_tracker: UnifiedBudget,
-                   seed: int = 0, budget: int | None = None) -> BaseArm:
+                   seed: int = 0, budget: int | None = None, *,
+                   survival_policy: str | None = None,
+                   min_survival_questions: int | None = None) -> BaseArm:
         arm_config = next((a for a in self.config.arms + self.config.full_grid_arms
                            if a.name == arm_name), None)
         if arm_config is None:
             raise ValueError(f"Unknown arm: {arm_name}")
         classes = {"gepa": GEPADefaultArm, "popperian": PopperianArm,
-                   "prose_critic": ProseCriticArm}
+                   "prose_critic": ProseCriticArm, "millian": MillianArm}
         if arm_config.arm_type not in classes:
             raise NotImplementedError(f"Pilot-only arm: {arm_name}")
         kwargs = dict(arm_config.kwargs)
+        if arm_config.arm_type in {"popperian", "millian"}:
+            if survival_policy is not None:
+                kwargs["survival_policy"] = survival_policy
+            if min_survival_questions is not None:
+                kwargs["min_survival_questions"] = min_survival_questions
         kwargs.update(seed=seed, max_metric_calls=budget if budget is not None else budget_tracker.max_units)
         return classes[arm_config.arm_type](name=arm_name, description=arm_config.description,
                                            budget_tracker=budget_tracker, **kwargs)
@@ -86,10 +93,22 @@ class ExperimentHarness:
         return classes[benchmark_name](name=benchmark_name, **kwargs)
 
     def run_single(self, benchmark_name: str, arm_name: str, budget: int, seed: int,
-                   test_size: int | None = None, max_cost: float | None = None) -> dict[str, Any]:
+                   test_size: int | None = None, max_cost: float | None = None,
+                   survival_policy: str | None = None,
+                   min_survival_questions: int | None = None) -> dict[str, Any]:
         runtime = ProviderRuntime()
+        arm_config = next((a for a in self.config.arms + self.config.full_grid_arms
+                           if a.name == arm_name), None)
+        options = arm_config.kwargs if arm_config is not None else {}
+        if survival_policy is None:
+            survival_policy = options.get("survival_policy", "strict")
+        if min_survival_questions is None:
+            min_survival_questions = options.get("min_survival_questions", 3)
+        policy_name = getattr(survival_policy, "name", survival_policy)
         trace = RunTrace(self.results_dir, self.config.name, benchmark_name, arm_name,
-                         {"budget": budget, "seed": seed}, sanitizer=runtime.sanitize)
+                         {"budget": budget, "seed": seed,
+                          "survival_policy": policy_name,
+                          "min_survival_questions": min_survival_questions}, sanitizer=runtime.sanitize)
         call_path = f"lm_calls/{trace.run_id}_{arm_name}.jsonl"
         cost_cap = float("inf") if max_cost is None else max_cost
         tracker = GuardedBudget(runtime, budget, cost_cap)
@@ -105,7 +124,13 @@ class ExperimentHarness:
         try:
             # Factory creates fresh histories per seed/run; no cache or previous-run accumulation.
             self.lms = self.lm_factory(self.config.model_config, seed)
-            if set(self.lms) != {"task", "reflection", "critic"}:
+            if arm_name == "M":
+                arm_config = next(a for a in self.config.arms if a.name == arm_name)
+                configured_defender = arm_config.kwargs.get("defender_lm")
+                if configured_defender is not None and "defender" not in self.lms:
+                    # Each run gets a fresh guarded copy, included before budget creation.
+                    self.lms["defender"] = configured_defender.copy()
+            if not {"task", "reflection", "critic"} <= set(self.lms) or set(self.lms) - {"task", "reflection", "critic", "defender"}:
                 raise ValueError("LM factory must return task, reflection and critic roles")
             if len({id(lm) for lm in self.lms.values()}) != len(self.lms):
                 raise ValueError("Use distinct LM instances for truthful per-role accounting")
@@ -122,11 +147,13 @@ class ExperimentHarness:
                                                    val_size=self.config.val_size,
                                                    test_size=self.config.test_size if test_size is None else test_size)
             program, metric = benchmark.get_program(), benchmark.get_metric()
-            arm = self.create_arm(arm_name, tracker, seed=seed, budget=budget)
+            arm = self.create_arm(arm_name, tracker, seed=seed, budget=budget,
+                                  survival_policy=survival_policy, min_survival_questions=min_survival_questions)
             with dspy.context(lm=self.lms["task"]):
                 optimized = arm.compile(program=program, metric=metric, trainset=train,
                                         valset=val, task_lm=self.lms["task"], event_sink=trace.proposal,
-                                        reflection_lm=self.lms["reflection" if arm_name == "A" else "critic"])
+                                        reflection_lm=self.lms["reflection" if arm_name == "A" else "critic"],
+                                        **({"defender_lm": self.lms.get("defender")} if arm_name == "M" else {}))
                 runtime.raise_if_failed()
                 optimization_calls, optimization_cost = tracker.used_calls(), tracker.used_usd()
                 optimization_complete = True
@@ -162,6 +189,8 @@ class ExperimentHarness:
                   "budget_stats": stats, "arm_stats": trace._sanitize(arm.get_stats()) if arm else {},
                   "artifacts": {"events": artifacts["epistemic_events"], "lm_calls": call_path},
                   "canary": self.canary,
+                  "survival_policy": getattr(arm, "survival_policy", None),
+                  "min_survival_questions": getattr(arm, "min_survival_questions", None),
                   "runtime_seconds": time.monotonic() - started,
                   "timestamp": datetime.now(timezone.utc).isoformat()}
         self._save_results(result)
@@ -195,7 +224,9 @@ class ExperimentHarness:
                                 raise RuntimeError("Stage dollar cap reached before all runs completed")
                             result = self.run_single(benchmark, arm, budget, seed,
                                                      test_size=stage.test_size,
-                                                     max_cost=stage.max_cost_dollars - cost)
+                                                     max_cost=stage.max_cost_dollars - cost,
+                                                     survival_policy=stage.survival_policy,
+                                                     min_survival_questions=stage.min_survival_questions)
                             results.append(result)
                             if result["status"] != "success":
                                 raise RuntimeError(f"Arm {arm} aborted: {result['message']}")

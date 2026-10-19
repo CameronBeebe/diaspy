@@ -13,8 +13,8 @@ def run_stage0(config: ExperimentConfig, *, harness: ExperimentHarness | None = 
                stage: StageConfig | None = None) -> list[dict]:
     """Shared runtime path for injected offline LMs and real stage-zero execution."""
     stage = stage or config.get_stage_config(0)
-    if stage.stage_id != 0 or stage.arms != ["A", "B"]:
-        raise ValueError("Stage 0 requires arms A and B")
+    if stage.stage_id != 0 or stage.arms != ["A", "B", "M"]:
+        raise ValueError("Stage 0 requires arms A, B and M")
     results = (harness or ExperimentHarness(config)).run_stage(stage)
     expected = (len(stage.models) * len(stage.benchmarks) * len(stage.arms)
                 * len(stage.budgets) * stage.n_seeds)
