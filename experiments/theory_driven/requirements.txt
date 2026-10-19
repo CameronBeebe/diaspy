@@ -14,6 +14,7 @@ scipy>=1.10.0
 # Testing
 pytest>=7.0.0
 pytest-timeout>=2.1.0
+pytest-socket>=0.7.0
 
 # Dashboard and notebooks
 mlflow>=2.8.0
@@ -22,8 +23,9 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 pandas>=2.0.0
 
-# Retrieval for HoVer
-bm25s>=0.1.0
+# HotpotQA distractor dataset and per-question retrieval
+rank_bm25>=0.2.2
+datasets>=3.0.0
 
 # Optional: Memory monitoring
 psutil>=5.9.0

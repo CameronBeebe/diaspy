@@ -1,9 +1,9 @@
 """Analysis tools for epistemic events."""
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from collections import defaultdict
 
-from .schema import EpistemicEvent, LakatosLabel
+from experiments.theory_driven.events.schema import EpistemicEvent, LakatosLabel
 
 
 class EventAnalyzer:
@@ -185,6 +185,8 @@ class EventAnalyzer:
         
         step_a = event_a.step
         step_b = event_b.step
+        # Both events were selected only when their step was present.
+        assert step_a is not None and step_b is not None
         
         return {
             "candidate_a": {

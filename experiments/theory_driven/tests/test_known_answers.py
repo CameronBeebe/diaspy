@@ -7,13 +7,9 @@ Tests that fundamental components work correctly:
 """
 
 import pytest
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import dspy
-from config import BudgetTracker, BudgetEnforcer, CostLimitExceeded
+from experiments.theory_driven.config import BudgetTracker, BudgetEnforcer, CostLimitExceeded
 
 
 def test_metric_scores_correctness():
@@ -104,7 +100,7 @@ def test_budget_cap_aborts():
     assert tracker.budget_exhausted
     
     # Stopper should return True (stop)
-    assert tracker(None) == True
+    assert tracker(None)
 
 
 def test_cost_limit_enforcer():

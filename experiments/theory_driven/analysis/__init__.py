@@ -6,9 +6,9 @@ Implements:
 - Progressive vs degenerating revision logging (Lakatos)
 """
 
-from .bootstrap import paired_bootstrap, compute_confidence_interval
-from .refutation_criteria import check_refutation_criteria
-from .calibration import compute_brier_score, compute_ece
+from experiments.theory_driven.analysis.bootstrap import paired_bootstrap, compute_confidence_interval
+from experiments.theory_driven.analysis.refutation_criteria import check_refutation_criteria
+from experiments.theory_driven.analysis.calibration import compute_brier_score, compute_ece
 
 __all__ = [
     "paired_bootstrap",

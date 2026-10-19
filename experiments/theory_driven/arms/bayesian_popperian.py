@@ -7,11 +7,11 @@ severity (Popperian: would probably have failed if harmless).
 
 import os
 import json
-from typing import Callable, List, Dict, Any, Optional, Literal
+from typing import Callable, List, Dict, Any, Optional, Literal, cast
 import pydantic
 import dspy
-from .base import BaseArm
-from ..config import BudgetTracker
+from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.config.budget_tracker import BudgetTracker
 
 
 class Clause(pydantic.BaseModel):
@@ -206,8 +206,6 @@ class BayesianPopperianOptimizer:
         """Test clause on examples. Returns (refuted, results)."""
         results = []
         
-        # Test with clause removed/revised
-        modified_instruction = current_instruction.replace(clause.text, "")
         
         with dspy.context(lm=self.task_lm):
             for ex in test_examples:
@@ -260,7 +258,8 @@ class BayesianPopperianOptimizer:
         if not predictors:
             return self.program
         
-        current_instruction = predictors[0].signature.instructions or "Solve the task."
+        signature = cast(type[dspy.Signature], predictors[0].signature)
+        current_instruction = signature.instructions or "Solve the task."
         
         # Decompose into clauses
         clauses = self.decompose_instruction(current_instruction)
@@ -327,7 +326,7 @@ class BayesianPopperianOptimizer:
         # (would be done at end, counts toward budget)
         
         # Update program instruction
-        predictors[0].signature = predictors[0].signature.with_instructions(
+        predictors[0].signature = signature.with_instructions(
             current_instruction
         )
         
@@ -348,7 +347,8 @@ class BayesianPopperianArm(BaseArm):
     ):
         """Initialize Bayesian/Popperian arm."""
         super().__init__(name, description, budget_tracker, **kwargs)
-        self.credence_method = credence_method
+        self.budget_tracker: BudgetTracker = budget_tracker
+        self.credence_method: Literal["jev", "verbal"] = credence_method
         self.max_iterations = max_iterations
         self.optimizer: Optional[BayesianPopperianOptimizer] = None
     
@@ -358,18 +358,22 @@ class BayesianPopperianArm(BaseArm):
         metric: Callable,
         trainset: list,
         valset: list,
-        critic_lm: dspy.LM,
-        task_lm: dspy.LM,
+        task_lm=None,
+        reflection_lm=None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile with Bayesian/Popperian optimizer."""
+        task_lm = task_lm if task_lm is not None else dspy.settings.lm
+        reflection_lm = reflection_lm if reflection_lm is not None else dspy.settings.lm
+        if task_lm is None or reflection_lm is None:
+            raise ValueError("Both task_lm and reflection_lm are required")
         self.optimizer = BayesianPopperianOptimizer(
             program=program,
             metric=metric,
             trainset=trainset,
             valset=valset,
             task_lm=task_lm,
-            reflection_lm=critic_lm,  # reflection_lm = critic_lm
+            reflection_lm=reflection_lm,
             budget_tracker=self.budget_tracker,
             credence_method=self.credence_method,
             max_iterations=self.max_iterations,

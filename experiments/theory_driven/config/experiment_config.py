@@ -101,7 +101,7 @@ class ModelConfig:
         
         # OpenRouter provider pinning
         if "openrouter/" in model and pin_provider:
-            provider_config = {
+            provider_config: Dict[str, Any] = {
                 "allow_fallbacks": False,  # Fail instead of falling back
                 "require_parameters": True,  # Require our params to be respected
             }
@@ -185,16 +185,18 @@ class ExperimentConfig:
     # Data settings
     train_size: int = 20
     val_size: int = 20
+    test_size: int = 50
     n_seeds: int = 5
     pilot_seeds: int = 2
     pilot_test_size: int = 100  # Subset for pilot
-    smoke_test_size: int = 20  # Subset for smoke test
+    smoke_test_size: int = 50  # Subset for smoke test
     
     # Model configuration
     model_config: ModelConfig = field(default_factory=ModelConfig)
     
     # Benchmarks
     benchmarks: List[BenchmarkConfig] = field(default_factory=lambda: [
+        BenchmarkConfig(name="hotpotqa", test_size=50),
         BenchmarkConfig(name="hover", extra_kwargs={"retrieval": "bm25s"}),
         BenchmarkConfig(name="pupa"),
     ])
@@ -318,8 +320,8 @@ class ExperimentConfig:
                 max_cost_dollars=1.0,  # Cap, but should be $0 with free model
                 budgets=[50],
                 n_seeds=1,
-                test_size=self.smoke_test_size,
-                benchmarks=["simple_qa"],  # Use simple_qa for smoke test
+                test_size=self.test_size,
+                benchmarks=["hotpotqa"],
                 arms=["A", "B"],  # GEPA default + Popperian only for slim core
                 models=[free_model],  # Use free model for stage 0
                 requires_stage_gate=True,

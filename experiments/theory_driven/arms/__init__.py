@@ -10,11 +10,11 @@ Arms:
 - F: dspy.SIMBA
 """
 
-from .base import BaseArm
-from .gepa_default import GEPADefaultArm
-from .prose_critic import ProseCriticArm
-from .popperian import PopperianArm
-from .bayesian_popperian import BayesianPopperianArm
+from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.arms.gepa_default import GEPADefaultArm
+from experiments.theory_driven.arms.prose_critic import ProseCriticArm
+from experiments.theory_driven.arms.popperian import PopperianArm
+from experiments.theory_driven.arms.bayesian_popperian import BayesianPopperianArm
 
 __all__ = [
     "BaseArm",

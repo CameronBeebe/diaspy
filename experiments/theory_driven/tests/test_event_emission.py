@@ -1,12 +1,9 @@
 """Test that every arm emits well-formed epistemic events."""
 
 import pytest
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from events import (
+from experiments.theory_driven.events import (
     EventEmitter,
     Conjecture,
     TestSelection,
@@ -89,7 +86,7 @@ def test_event_emitter_step():
     assert step_event.step.arm_name == "test_arm"
     assert step_event.step.iteration == 1
     assert step_event.step.conjecture.candidate_id == "candidate_001"
-    assert step_event.step.decision.accepted == True
+    assert step_event.step.decision.accepted is True
 
 
 def test_event_validation():
@@ -106,7 +103,7 @@ def test_event_validation():
     assert conjecture.candidate_id == "c001"
     
     # Invalid severity (should fail validation)
-    from events.schema import Refutation
+    from experiments.theory_driven.events.schema import Refutation
     
     with pytest.raises(Exception):  # Pydantic ValidationError
         Refutation(
@@ -192,7 +189,7 @@ def test_instruction_diff():
 
 def test_event_storage_roundtrip():
     """Test saving and loading events."""
-    from events import EventStorage
+    from experiments.theory_driven.events import EventStorage
     import tempfile
     
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -223,7 +220,7 @@ def test_event_storage_roundtrip():
 
 def test_event_analyzer():
     """Test event analysis."""
-    from events import EventAnalyzer
+    from experiments.theory_driven.events import EventAnalyzer
     
     # Create some test events
     emitter = EventEmitter(
@@ -293,6 +290,14 @@ def test_event_analyzer():
     # Test timeline
     timeline = analyzer.extract_timeline()
     assert len(timeline) == 3
+
+    comparison = analyzer.compare_candidates("candidate_001", "candidate_003")
+    assert comparison["candidate_a"]["instruction"] == "new_0"
+    assert comparison["candidate_b"]["instruction"] == "new_2"
+    assert comparison["candidate_a"]["score"] == 0.8
+    assert analyzer.compare_candidates("missing", "candidate_003") == {
+        "error": "One or both candidates not found"
+    }
 
 
 if __name__ == "__main__":

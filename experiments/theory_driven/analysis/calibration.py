@@ -1,7 +1,7 @@
 """Calibration metrics: Brier score and ECE for clause credences."""
 
 import numpy as np
-from typing import List, Tuple
+from typing import List, Optional
 
 
 def compute_brier_score(
@@ -17,16 +17,16 @@ def compute_brier_score(
     Returns:
         Brier score (lower is better, 0 is perfect)
     """
-    predictions = np.array(predictions)
-    outcomes = np.array(outcomes)
+    prediction_array = np.array(predictions)
+    outcome_array = np.array(outcomes)
     
-    return float(np.mean((predictions - outcomes) ** 2))
+    return float(np.mean((prediction_array - outcome_array) ** 2))
 
 
 def compute_brier_skill_score(
     predictions: List[float],
     outcomes: List[int],
-    baseline_rate: float = None
+    baseline_rate: Optional[float] = None
 ) -> float:
     """Compute Brier skill score against base rate.
     
@@ -41,7 +41,7 @@ def compute_brier_skill_score(
     brier = compute_brier_score(predictions, outcomes)
     
     if baseline_rate is None:
-        baseline_rate = np.mean(outcomes)
+        baseline_rate = float(np.mean(outcomes))
     
     baseline_brier = compute_brier_score(
         [baseline_rate] * len(outcomes),
@@ -66,20 +66,20 @@ def compute_ece(
     Returns:
         ECE (0 to 1, lower is better)
     """
-    predictions = np.array(predictions)
-    outcomes = np.array(outcomes)
+    prediction_array = np.array(predictions)
+    outcome_array = np.array(outcomes)
     
     # Create bins
     bins = np.linspace(0, 1, n_bins + 1)
-    bin_indices = np.digitize(predictions, bins[:-1]) - 1
+    bin_indices = np.digitize(prediction_array, bins[:-1]) - 1
     
     ece = 0.0
     
     for i in range(n_bins):
         mask = bin_indices == i
         if np.sum(mask) > 0:
-            bin_conf = np.mean(predictions[mask])
-            bin_acc = np.mean(outcomes[mask])
+            bin_conf = np.mean(prediction_array[mask])
+            bin_acc = np.mean(outcome_array[mask])
             bin_size = np.sum(mask)
             
             ece += (bin_size / len(predictions)) * abs(bin_conf - bin_acc)

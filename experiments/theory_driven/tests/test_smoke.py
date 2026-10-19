@@ -1,166 +1,94 @@
-"""Smoke test: actually run arms A and B end-to-end with fake LMs."""
-
-import sys
+"""Stage-zero runs through the real runner, harness, GEPA and evaluation."""
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import logging
 
 import dspy
-from config import BudgetTracker
-from arms import GEPADefaultArm, PopperianArm
-from benchmarks import SimpleQABenchmark
+
+from dspy.utils import DummyLM
+import pytest
+
+from experiments.theory_driven.config import ExperimentConfig
 
 
-def test_arm_a_with_fake_lm():
-    """Test Arm A (GEPA default) with DummyLM."""
-    # Create fake LM that returns predictable answers
-    lm = dspy.LM(model="dummy", cache=False)
-    lm.history = []  # Initialize history
-    dspy.configure(lm=lm)
-    
-    # Create budget tracker
-    budget = BudgetTracker(max_units=10)
-    
-    # Create arm
-    arm = GEPADefaultArm(
-        name="A",
-        description="Test",
-        budget_tracker=budget,
-        seed=42
-    )
-    
-    # Load simple data
-    benchmark = SimpleQABenchmark(test_size=5)
-    train, val, test = benchmark.load_data(seed=42)
-    
-    # Get program and metric
-    program = benchmark.get_program()
-    metric = benchmark.get_metric()
-    
-    # Track history length before
-    start_len = len(lm.history)
-    
-    # Compile (should work without crashing)
-    try:
-        optimized = arm.compile(
-            program=program,
-            metric=metric,
-            trainset=train[:5],
-            valset=val[:3],
-            task_lm=lm,
-            reflection_lm=lm,
-        )
-    except Exception as e:
-        # Arm A requires reflection_lm - if it crashes with AssertionError, test fails
-        if "reflection" in str(e).lower():
-            raise AssertionError(f"Arm A crashed with reflection_lm error: {e}")
-        # Other errors are acceptable for fake LM
-        pass
-    
-    # Check that calls were made
-    end_len = len(lm.history)
-    actual_calls = end_len - start_len
-    
-    assert actual_calls > 0, f"Expected >0 LM calls, got {actual_calls}"
-    
-    # Check budget tracker
-    stats = budget.get_stats()
-    assert stats["total_units"] >= 0, "Budget tracker should have recorded units"
+def test_harness_imports():
+    from experiments.theory_driven.harness import ExperimentHarness
+    assert callable(ExperimentHarness)
 
 
-def test_arm_b_with_fake_lm():
-    """Test Arm B (Popperian) with DummyLM."""
-    # Create fake LM
-    lm = dspy.LM(model="dummy", cache=False)
-    lm.history = []
-    dspy.configure(lm=lm)
-    
-    # Create budget tracker
-    budget = BudgetTracker(max_units=10)
-    
-    # Create arm
-    arm = PopperianArm(
-        name="B",
-        description="Test",
-        budget_tracker=budget,
-        seed=42
-    )
-    
-    # Load simple data
-    benchmark = SimpleQABenchmark(test_size=5)
-    train, val, test = benchmark.load_data(seed=42)
-    
-    program = benchmark.get_program()
-    metric = benchmark.get_metric()
-    
-    start_len = len(lm.history)
-    
-    # Compile
-    try:
-        optimized = arm.compile(
-            program=program,
-            metric=metric,
-            trainset=train[:5],
-            valset=val[:3],
-            task_lm=lm,
-            reflection_lm=lm,
-        )
-    except Exception as e:
-        # Some errors are acceptable with fake LM
-        pass
-    
-    end_len = len(lm.history)
-    actual_calls = end_len - start_len
-    
-    assert actual_calls > 0, f"Expected >0 LM calls, got {actual_calls}"
-    
-    stats = budget.get_stats()
-    assert stats["total_units"] >= 0, "Budget tracker should have recorded units"
+def test_runner_has_offline_dependency_injection():
+    from experiments.theory_driven import run_staged
+    assert callable(getattr(run_staged, "run_stage0", None))
 
 
-def test_arms_are_distinct():
-    """Test that arms A and B produce different behaviors."""
-    # This is a minimal distinctness check
-    budget_a = BudgetTracker(max_units=10)
-    budget_b = BudgetTracker(max_units=10)
-    
-    arm_a = GEPADefaultArm("A", "GEPA default", budget_a, seed=42)
-    arm_b = PopperianArm("B", "Popperian", budget_b, seed=42)
-    
-    # Check they have different types
-    assert type(arm_a) != type(arm_b), "Arms should be different types"
-    assert arm_a.name != arm_b.name, "Arms should have different names"
+def scripted_lms():
+    task = DummyLM([{"answer": "deliberately incorrect"}] * 300)
+    # Stock DSPy GEPA uses JSONAdapter for its new_instruction field.
+    reflection = DummyLM([{"new_instruction": "Answer concisely using the retrieved evidence."}] * 100,
+                         adapter=dspy.JSONAdapter())
+    refutations = [{"claim": "Answer unsupported by evidence", "counterexample_ids": [0],
+                    "severity": 1.0, "proposed_fix": "Read the supporting paragraphs"}]
+    critic = DummyLM([item for _ in range(100) for item in (
+        {"refutations": refutations},
+        {"new_instruction": "Use supporting paragraphs; output only the answer."},
+    )])
+    return {"task": task, "reflection": reflection, "critic": critic}
 
 
-def test_budget_cap_is_respected():
-    """Test that budget tracker can detect exhaustion."""
-    budget = BudgetTracker(max_units=5)
-    
-    # Record some calls
-    for i in range(5):
-        budget.record_task_call(input_tokens=10, output_tokens=10)
-    
-    # Check exhausted
-    assert budget.budget_exhausted, "Budget should be exhausted after 5 calls with max_units=5"
-    
-    stats = budget.get_stats()
-    assert stats["total_units"] >= 5, f"Expected >=5 units, got {stats['total_units']}"
+@pytest.fixture
+def tiny_run(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    from experiments.theory_driven.benchmarks import HotpotQABenchmark
+    from experiments.theory_driven.harness import ExperimentHarness
+    from experiments.theory_driven.run_staged import run_stage0
+
+    config = ExperimentConfig(train_size=1, val_size=1, test_size=1,
+                              results_dir=str(tmp_path))
+    for arm in config.arms:
+        arm.kwargs.update(reflection_minibatch_size=1)
+        if arm.name == "B":
+            arm.kwargs["max_attempts"] = 1
+    fixture = Path(__file__).parent / "fixtures" / "hotpotqa.json"
+    runs = []
+
+    def factory(model_config, seed):
+        lms = scripted_lms()
+        runs.append(lms)
+        return lms
+
+    harness = ExperimentHarness(config, lm_factory=factory,
+                                benchmark_factory=lambda name: HotpotQABenchmark(name, fixture_path=fixture))
+    stage = config.get_stage_config(0)
+    stage.budgets = [8]
+    results = run_stage0(config, harness=harness, stage=stage)
+    assert "reflection failed" not in caplog.text
+    assert "Traceback" not in caplog.text
+    return results, runs
 
 
-def test_seeds_produce_different_splits():
-    """Test that different seeds produce different data splits."""
-    benchmark = SimpleQABenchmark(test_size=5)
-    
-    train1, val1, test1 = benchmark.load_data(seed=1)
-    train2, val2, test2 = benchmark.load_data(seed=2)
-    
-    # Check that at least one question is different
-    questions1 = [ex.question for ex in train1]
-    questions2 = [ex.question for ex in train2]
-    
-    assert questions1 != questions2, "Different seeds should produce different train splits"
+def test_both_arms_complete_and_account_for_test_evaluation(tiny_run):
+    results, runs = tiny_run
+    assert [r["arm"] for r in results] == ["A", "B"]
+    for result, lms in zip(results, runs, strict=True):
+        assert result["status"] == "success", result
+        assert result["test_size"] == len(result["test_scores"]) == 1
+        assert result["test_mean"] == 0.0
+        stats = result["budget_stats"]
+        assert stats["total_units"] == sum(len(lm.history) for lm in lms.values())
+        assert stats["test_calls"] == 1
+        assert stats["optimization_calls"] >= result["budget"]
+        assert stats["optimization_overshoot"] == stats["optimization_calls"] - result["budget"]
+        assert stats["total_units"] == stats["optimization_calls"] + stats["test_calls"]
+        assert stats["stop_triggered"]
+        assert stats["total_cost"] == 0.0
 
 
-if __name__ == "__main__":
-    import pytest
-    pytest.main([__file__, "-v", "-s"])
+def test_arm_patterns_differ_on_same_seed_and_data(tiny_run):
+    results, runs = tiny_run
+    a, b = runs
+    assert len(a["reflection"].history) > 0
+    assert len(a["critic"].history) == 0
+    assert len(b["reflection"].history) == 0
+    assert len(b["critic"].history) > 0
+    assert any("refutations" in str(entry["messages"]) for entry in b["critic"].history)
+    assert results[1]["arm_stats"]["proposer_log"]
+    assert all(not item["survived"] for item in results[1]["arm_stats"]["proposer_log"])

@@ -25,14 +25,14 @@ def paired_bootstrap(
     """
     rng = np.random.RandomState(random_seed)
     
-    scores_a = np.array(scores_a)
-    scores_b = np.array(scores_b)
+    scores_a_array = np.array(scores_a)
+    scores_b_array = np.array(scores_b)
     
     if len(scores_a) != len(scores_b):
         raise ValueError("Score arrays must have same length for paired test")
     
     n = len(scores_a)
-    differences = scores_a - scores_b
+    differences = scores_a_array - scores_b_array
     observed_mean_diff = np.mean(differences)
     
     # Bootstrap
@@ -82,13 +82,13 @@ def compute_confidence_interval(
         Tuple of (lower, upper) CI bounds
     """
     rng = np.random.RandomState(random_seed)
-    values = np.array(values)
+    values_array = np.array(values)
     n = len(values)
     
     bootstrap_means = []
     for _ in range(n_samples):
         indices = rng.choice(n, size=n, replace=True)
-        bootstrap_means.append(np.mean(values[indices]))
+        bootstrap_means.append(np.mean(values_array[indices]))
     
     bootstrap_means = np.array(bootstrap_means)
     

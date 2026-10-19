@@ -2,8 +2,8 @@
 
 import dspy
 from typing import Callable
-from .base import BaseArm
-from ..config import BudgetTracker
+from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
 
 class GEPADefaultArm(BaseArm):
@@ -13,7 +13,7 @@ class GEPADefaultArm(BaseArm):
         self,
         name: str,
         description: str,
-        budget_tracker: BudgetTracker,
+        budget_tracker: BudgetTracker | UnifiedBudget,
         max_metric_calls: int = 200,
         reflection_minibatch_size: int = 3,
         use_merge: bool = False,
@@ -71,19 +71,21 @@ class GEPADefaultArm(BaseArm):
         gepa = dspy.GEPA(
             metric=metric,
             reflection_lm=reflection_lm,
-            max_metric_calls=self.budget_tracker.max_units,  # Use budget, not hard-coded value
+            max_metric_calls=self.max_metric_calls,
             reflection_minibatch_size=self.reflection_minibatch_size,
             use_merge=self.use_merge,
             seed=self.seed,  # Pass seed to GEPA
             track_stats=True,
-            stop_callbacks=[self.budget_tracker],
+            num_threads=1,
+            gepa_kwargs={**self.kwargs, "stop_callbacks": [self.budget_tracker]},
         )
         
         # Compile
-        optimized = gepa.compile(
-            program,
-            trainset=trainset,
-            valset=valset,
-        )
+        with dspy.context(lm=task_lm if task_lm is not None else dspy.settings.lm):
+            optimized = gepa.compile(
+                program,
+                trainset=trainset,
+                valset=valset,
+            )
         
         return optimized

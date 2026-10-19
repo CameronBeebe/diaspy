@@ -1,7 +1,7 @@
 """Refutation criteria from the spec (R1-R7, H_cal)."""
 
 from typing import Dict, List, Any
-from .bootstrap import paired_bootstrap
+from experiments.theory_driven.analysis.bootstrap import paired_bootstrap
 
 
 def check_refutation_criteria(
@@ -39,6 +39,7 @@ def check_refutation_criteria(
             r["test_mean"]
             for r in results.get(arm, [])
             if r["benchmark"] == benchmark and r["budget"] == budget
+            and r["test_mean"] is not None
         ]
     
     # Helper to get pooled scores over budgets
@@ -75,8 +76,9 @@ def check_refutation_criteria(
             "fails": b_fails,
         }
         
-        # Hypothesis refuted if BOTH K and B fail
-        criteria["R1_hypothesis_refuted"] = k_fails and b_fails
+        # Hypothesis refuted if BOTH K and B fail.
+        # Known R1 missing-K edge case is deferred with the out-of-scope R1 fixes.
+        criteria["R1_hypothesis_refuted"] = k_fails and b_fails  # pyright: ignore[reportPossiblyUnboundVariable]
     
     # R1': Strong criterion
     if k_jev_pooled and a_pooled:

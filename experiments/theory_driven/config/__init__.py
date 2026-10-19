@@ -1,16 +1,16 @@
 """Configuration management for theory-driven experiments."""
 
-from .experiment_config import (
+from experiments.theory_driven.config.experiment_config import (
     ExperimentConfig,
     ArmConfig,
     BenchmarkConfig,
     ModelConfig,
     StageConfig,
 )
-from .budget_tracker import BudgetTracker, BudgetEnforcer, CostLimitExceeded
-from .stage_gate import StageGate, StageGateStatus, CheckResult, SmokeTestChecks
-from .provenance import ProvenanceLogger, LMCallTrace, fetch_openrouter_generation_metadata, reconcile_costs
-from .canary import CanarySuite, CanaryPrompt, CanaryResult
+from experiments.theory_driven.config.budget_tracker import BudgetTracker, BudgetEnforcer, CostLimitExceeded
+from experiments.theory_driven.config.stage_gate import StageGate, StageGateStatus, CheckResult, SmokeTestChecks
+from experiments.theory_driven.config.provenance import ProvenanceLogger, LMCallTrace, fetch_openrouter_generation_metadata, reconcile_costs
+from experiments.theory_driven.config.canary import CanarySuite, CanaryPrompt, CanaryResult
 
 __all__ = [
     "ExperimentConfig",

@@ -27,7 +27,7 @@ class Refutation(BaseModel):
     
     # Optional metadata
     example_details: Optional[List[Dict[str, Any]]] = Field(
-        None,
+        default=None,
         description="Full example data for counterexamples"
     )
 
@@ -43,10 +43,10 @@ class ClauseCredence(BaseModel):
     
     # Credence tracking
     credence_before: float = Field(..., ge=0, le=1, description="P(implicated) before test")
-    credence_after: Optional[float] = Field(None, ge=0, le=1, description="P(implicated) after test")
+    credence_after: Optional[float] = Field(default=None, ge=0, le=1, description="P(implicated) after test")
     
     # Evidence
-    evidence_count: int = Field(0, description="Number of observations")
+    evidence_count: int = Field(default=0, description="Number of observations")
     
     # Method
     credence_method: Literal["jev", "verbalized", "base_rate"] = Field(
@@ -58,7 +58,7 @@ class ClauseCredence(BaseModel):
 class Conjecture(BaseModel):
     """Proposed instruction change."""
     candidate_id: str = Field(..., description="Unique identifier for this candidate")
-    parent_id: Optional[str] = Field(None, description="Parent candidate ID (lineage)")
+    parent_id: Optional[str] = Field(default=None, description="Parent candidate ID (lineage)")
     
     module_name: str = Field(..., description="Module/component being updated")
     old_instruction: str = Field(..., description="Current instruction")
@@ -66,14 +66,14 @@ class Conjecture(BaseModel):
     
     # Diff representation
     instruction_diff: Optional[str] = Field(
-        None,
+        default=None,
         description="Text diff (unified format) of instruction change"
     )
     
     # Generation context
     generated_by: str = Field(..., description="Arm/proposer that generated this")
     generation_reason: Optional[str] = Field(
-        None,
+        default=None,
         description="Why this change was proposed"
     )
 
@@ -86,7 +86,7 @@ class TestSelection(BaseModel):
     )
     
     # For clause-level tests
-    target_clause_id: Optional[int] = Field(None, description="Clause being tested")
+    target_clause_id: Optional[int] = Field(default=None, description="Clause being tested")
     
     # Test examples
     example_ids: List[int] = Field(..., description="Indices of examples used")
@@ -98,7 +98,7 @@ class TestSelection(BaseModel):
         description="Why this test was chosen (e.g., highest EIG, most severe)"
     )
     expected_information_gain: Optional[float] = Field(
-        None,
+        default=None,
         description="Expected information gain (bits)"
     )
     
@@ -115,11 +115,11 @@ class TestOutcome(BaseModel):
     example_scores: List[float] = Field(..., description="Score for each test example")
     
     # Feedback
-    feedback: Optional[str] = Field(None, description="Feedback from metric")
+    feedback: Optional[str] = Field(default=None, description="Feedback from metric")
     
     # For survival checks
-    survival_check: bool = Field(False, description="Was this a survival check?")
-    survived: Optional[bool] = Field(None, description="Did candidate survive?")
+    survival_check: bool = Field(default=False, description="Was this a survival check?")
+    survived: Optional[bool] = Field(default=None, description="Did candidate survive?")
 
 
 class AcceptRejectDecision(BaseModel):
@@ -130,17 +130,17 @@ class AcceptRejectDecision(BaseModel):
     decision_reason: str = Field(..., description="Why this decision was made")
     
     # Supporting data
-    minibatch_score: Optional[float] = Field(None, description="Score on minibatch")
-    validation_score: Optional[float] = Field(None, description="Score on validation set")
+    minibatch_score: Optional[float] = Field(default=None, description="Score on minibatch")
+    validation_score: Optional[float] = Field(default=None, description="Score on validation set")
     
     # For Popperian arms
     survival_check_passed: Optional[bool] = Field(
-        None,
+        default=None,
         description="Whether survival check passed"
     )
     
     # Budget
-    budget_exhausted: bool = Field(False, description="Was budget exhausted?")
+    budget_exhausted: bool = Field(default=False, description="Was budget exhausted?")
 
 
 class OptimizationStep(BaseModel):
@@ -159,11 +159,11 @@ class OptimizationStep(BaseModel):
     
     # Evidence (varies by arm)
     refutations: Optional[List[Refutation]] = Field(
-        None,
+        default=None,
         description="Refutations (for Popperian arms)"
     )
     clause_credences: Optional[List[ClauseCredence]] = Field(
-        None,
+        default=None,
         description="Clause credences (for Bayesian/Popperian arms)"
     )
     
@@ -176,11 +176,11 @@ class OptimizationStep(BaseModel):
     
     # Lakatos label
     lakatos_label: LakatosLabel = Field(
-        LakatosLabel.UNKNOWN,
+        default=LakatosLabel.UNKNOWN,
         description="Progressive vs degenerating"
     )
     lakatos_rationale: Optional[str] = Field(
-        None,
+        default=None,
         description="Why this label was assigned"
     )
     
@@ -195,8 +195,8 @@ class OptimizationStep(BaseModel):
     )
     
     # MLflow
-    mlflow_run_id: Optional[str] = Field(None, description="MLflow run ID")
-    mlflow_span_id: Optional[str] = Field(None, description="MLflow span ID")
+    mlflow_run_id: Optional[str] = Field(default=None, description="MLflow run ID")
+    mlflow_span_id: Optional[str] = Field(default=None, description="MLflow span ID")
 
 
 class EpistemicEvent(BaseModel):
@@ -219,7 +219,7 @@ class EpistemicEvent(BaseModel):
     run_id: str = Field(..., description="Unique run identifier")
     
     # The actual step (if optimization_step)
-    step: Optional[OptimizationStep] = Field(None, description="Optimization step details")
+    step: Optional[OptimizationStep] = Field(default=None, description="Optimization step details")
     
     # For initialization/finalization events
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")

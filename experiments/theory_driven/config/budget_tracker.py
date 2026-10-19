@@ -1,11 +1,91 @@
 """Unified budget tracking for experiments.
 
-Tracks both call counts and token-weighted costs. One unit = one rollout
-or one reflection/critic call. Per spec, GEPA can overshoot by one iteration.
+UnifiedBudget reads actual LM histories for call counts and provider costs.
+GEPA can overshoot by one iteration. Legacy manual accounting remains only for
+pilot optimizers outside the stage-0 GEPA path.
 """
 
 from typing import List, Optional, Dict, Any
 import threading
+
+
+class UnifiedBudget:
+    """GEPA stopper and live accounting over unique LM histories.
+
+    Use fresh LMs per run. Aliased roles are attributed to the first role in
+    insertion order, since a shared LM history cannot distinguish its callers.
+    Unlabelled positional LMs receive ``lm_N`` roles. No history is reset here.
+    """
+
+    def __init__(
+        self, units: int, max_usd: float, *lms: Any,
+        roles: Optional[Dict[str, Any]] = None,
+    ):
+        self.max_units = units
+        self.max_usd = max_usd
+        self.stop_triggered = False
+        self.stop_calls: int | None = None
+        self.lms: List[Any] = []
+        self.roles: Dict[str, Any] = {}
+        seen: set[int] = set()
+        for role, lm in (roles or {}).items():
+            if id(lm) not in seen:
+                seen.add(id(lm))
+                self.lms.append(lm)
+                self.roles[role] = lm
+        for lm in lms:
+            if id(lm) not in seen:
+                seen.add(id(lm))
+                self.lms.append(lm)
+                self.roles[f"lm_{len(self.lms)}"] = lm
+
+    def used_calls(self) -> int:
+        return sum(len(lm.history) for lm in self.lms)
+
+    def used_usd(self) -> float:
+        return sum(float(entry.get("cost") or 0) for lm in self.lms for entry in lm.history)
+
+    @property
+    def total_units(self) -> int:
+        return self.used_calls()
+
+    @property
+    def total_cost(self) -> float:
+        return self.used_usd()
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self.used_calls() >= self.max_units or self.used_usd() >= self.max_usd
+
+    def __call__(self, gepa_state: Any) -> bool:
+        exhausted = self.budget_exhausted
+        if exhausted and not self.stop_triggered:
+            self.stop_triggered = True
+            self.stop_calls = self.used_calls()
+        return exhausted
+
+    def get_stats(self) -> Dict[str, Any]:
+        role_calls = {role: len(lm.history) for role, lm in self.roles.items()}
+        role_costs = {
+            role: sum(float(entry.get("cost") or 0) for entry in lm.history)
+            for role, lm in self.roles.items()
+        }
+        return {
+            "max_units": self.max_units,
+            "max_usd": self.max_usd,
+            "stop_triggered": self.stop_triggered,
+            "stop_calls": self.stop_calls,
+            "total_units": self.used_calls(),
+            "total_cost": self.used_usd(),
+            "role_calls": role_calls,
+            "overshoot_units": max(0, self.used_calls() - self.max_units),
+            "overshoot_usd": max(0.0, self.used_usd() - self.max_usd),
+            "role_costs": role_costs,
+            "task_lm_calls": role_calls.get("task", 0),
+            "reflection_lm_calls": role_calls.get("reflection", 0),
+            "critic_lm_calls": role_calls.get("critic", 0),
+            "budget_exhausted": self.budget_exhausted,
+        }
 
 
 class BudgetTracker:

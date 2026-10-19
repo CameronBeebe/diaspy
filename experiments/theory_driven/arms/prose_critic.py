@@ -1,9 +1,11 @@
 """Arm C: GEPA + untyped prose critic."""
 
 import dspy
+from dspy.clients.base_lm import BaseLM
+from collections.abc import Mapping, Sequence
 from typing import Callable, List, Dict, Any
-from .base import BaseArm
-from ..config import BudgetTracker
+from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
 
 class ProseCritique(dspy.Signature):
@@ -33,8 +35,8 @@ class ProseCriticProposer:
     
     def __init__(
         self,
-        critic_lm: dspy.LM,
-        budget_tracker: BudgetTracker,
+        critic_lm: BaseLM,
+        budget_tracker: BudgetTracker | UnifiedBudget,
     ):
         """Initialize prose critic proposer.
         
@@ -51,7 +53,7 @@ class ProseCriticProposer:
     def __call__(
         self,
         candidate: Dict[str, str],
-        reflective_dataset: Dict[str, list],
+        reflective_dataset: Mapping[str, Sequence[Mapping[str, Any]]],
         components_to_update: List[str]
     ) -> Dict[str, str]:
         """GEPA proposal function interface.
@@ -84,11 +86,6 @@ class ProseCriticProposer:
                     examples_with_feedback=shown
                 )
             
-            self.budget_tracker.record_reflection_call(
-                input_tokens=0,
-                output_tokens=0,
-                metadata={"type": "prose_critique", "component": name}
-            )
             
             # Rewrite
             with dspy.context(lm=self.critic_lm):
@@ -97,11 +94,6 @@ class ProseCriticProposer:
                     critique=critique_result.critique
                 )
             
-            self.budget_tracker.record_reflection_call(
-                input_tokens=0,
-                output_tokens=0,
-                metadata={"type": "prose_rewrite", "component": name}
-            )
             
             self.log.append({
                 "component": name,
@@ -122,7 +114,7 @@ class ProseCriticArm(BaseArm):
         self,
         name: str,
         description: str,
-        budget_tracker: BudgetTracker,
+        budget_tracker: BudgetTracker | UnifiedBudget,
         max_metric_calls: int = 200,
         reflection_minibatch_size: int = 3,
         use_merge: bool = False,
@@ -143,13 +135,17 @@ class ProseCriticArm(BaseArm):
         metric: Callable,
         trainset: list,
         valset: list,
-        critic_lm: dspy.LM,
-        task_lm: dspy.LM,
+        task_lm=None,
+        reflection_lm=None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile with prose critic proposer."""
+        task_lm = task_lm if task_lm is not None else dspy.settings.lm
+        reflection_lm = reflection_lm if reflection_lm is not None else dspy.settings.lm
+        if task_lm is None or reflection_lm is None:
+            raise ValueError("Both task_lm and reflection_lm are required")
         self.proposer = ProseCriticProposer(
-            critic_lm=critic_lm,
+            critic_lm=reflection_lm,
             budget_tracker=self.budget_tracker,
         )
         
@@ -161,17 +157,19 @@ class ProseCriticArm(BaseArm):
             use_merge=self.use_merge,
             seed=self.seed,
             track_stats=True,
+            num_threads=1,
             gepa_kwargs={
+                **self.kwargs,
                 "stop_callbacks": [self.budget_tracker],
-                **self.kwargs
             }
         )
         
-        optimized = gepa.compile(
-            program,
-            trainset=trainset,
-            valset=valset,
-        )
+        with dspy.context(lm=task_lm if task_lm is not None else dspy.settings.lm):
+            optimized = gepa.compile(
+                program,
+                trainset=trainset,
+                valset=valset,
+            )
         
         return optimized
     

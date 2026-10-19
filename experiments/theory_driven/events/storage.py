@@ -2,10 +2,10 @@
 
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 from datetime import datetime
 
-from .schema import EpistemicEvent
+from experiments.theory_driven.events.schema import EpistemicEvent
 
 
 class EventStorage:

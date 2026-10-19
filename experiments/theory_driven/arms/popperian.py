@@ -7,8 +7,10 @@ import json
 from typing import Callable, List, Dict, Any, Optional
 import pydantic
 import dspy
-from .base import BaseArm
-from ..config import BudgetTracker
+from dspy.clients.base_lm import BaseLM
+from collections.abc import Mapping, Sequence
+from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
 
 class Refutation(pydantic.BaseModel):
@@ -51,9 +53,9 @@ class PopperianProposer:
         program: dspy.Module,
         metric: Callable,
         gold_by_question: Dict[str, Any],
-        critic_lm: dspy.LM,
-        task_lm: dspy.LM,
-        budget_tracker: BudgetTracker,
+        critic_lm: BaseLM,
+        task_lm: BaseLM,
+        budget_tracker: BudgetTracker | UnifiedBudget,
         max_attempts: int = 2,
         severity_tau: float = 0.5,
         archive_cap: int = 6,
@@ -66,7 +68,7 @@ class PopperianProposer:
             gold_by_question: Mapping from question to gold example
             critic_lm: LM for critique and rewrite
             task_lm: LM for task execution
-            budget_tracker: Budget tracker for recording calls
+            budget_tracker: History-based budget stopper
             max_attempts: Maximum rewrite attempts per iteration
             severity_tau: Minimum severity for archive inclusion
             archive_cap: Maximum archive size
@@ -93,7 +95,8 @@ class PopperianProposer:
         predictor_name: str,
         instruction: str,
         refutations: List[Refutation],
-        batch: list
+        batch: list,
+        candidate: Dict[str, str],
     ) -> tuple[bool, List[Any]]:
         """Re-run each counterexample under the new instruction; all must now score 1.
         
@@ -104,6 +107,7 @@ class PopperianProposer:
             instruction: New instruction to test
             refutations: Refutations that led to this instruction
             batch: Current minibatch
+            candidate: Full parent candidate, including predictors not being updated
             
         Returns:
             Tuple of (survived, tested_questions)
@@ -113,33 +117,33 @@ class PopperianProposer:
             i for r in refutations
             if r.severity >= self.tau
             for i in r.counterexample_ids
-            if i < len(batch)
+            if 0 <= i < len(batch)
         })
         
         questions = [batch[i]["Inputs"]["question"] for i in ids]
         
         # Add archived regression tests
         questions += [q for q in self.archive if q not in questions]
+        if not questions:
+            return False, questions
         
         # Test each question with new instruction
         prog = self.program.deepcopy()
         predictors = dict(prog.named_predictors())
-        if predictor_name in predictors:
-            predictors[predictor_name].signature = \
-                predictors[predictor_name].signature.with_instructions(instruction)
+        for name, predictor in predictors.items():
+            signature = predictor.signature
+            assert signature is not None
+            predictor.signature = signature.with_instructions(candidate[name])
+        predictor = predictors[predictor_name]
+        signature = predictor.signature
+        assert signature is not None
+        predictor.signature = signature.with_instructions(instruction)
         
         with dspy.context(lm=self.task_lm):
             for q in questions:
                 gold = self.gold[q]
-                pred = prog(question=q)
+                pred = prog(**gold.inputs())
                 
-                # Record task LM call in budget
-                # Note: In real runs, we'd extract token counts from LM response
-                self.budget_tracker.record_task_call(
-                    input_tokens=0,  # Would extract from response
-                    output_tokens=0,
-                    metadata={"type": "survival_check", "question": q}
-                )
                 
                 if self.metric(gold, pred, None, None, None).score < 1:
                     return False, questions
@@ -154,7 +158,7 @@ class PopperianProposer:
     def __call__(
         self,
         candidate: Dict[str, str],
-        reflective_dataset: Dict[str, list],
+        reflective_dataset: Mapping[str, Sequence[Mapping[str, Any]]],
         components_to_update: List[str]
     ) -> Dict[str, str]:
         """GEPA proposal function interface.
@@ -187,15 +191,10 @@ class PopperianProposer:
                 )
                 refutations = critique_result.refutations
             
-            # Record critique call
-            self.budget_tracker.record_reflection_call(
-                input_tokens=0,  # Would extract from response
-                output_tokens=0,
-                metadata={"type": "critique", "component": name}
-            )
             
             # Rewrite attempts
             new = candidate[name]
+            ok = False
             for attempt in range(1, self.max_attempts + 1):
                 with dspy.context(lm=self.critic_lm):
                     rewrite_result = self.rewrite(
@@ -204,15 +203,9 @@ class PopperianProposer:
                     )
                     new = rewrite_result.new_instruction
                 
-                # Record rewrite call
-                self.budget_tracker.record_reflection_call(
-                    input_tokens=0,
-                    output_tokens=0,
-                    metadata={"type": "rewrite", "component": name, "attempt": attempt}
-                )
                 
                 # Survival check
-                ok, ids = self.survives(name, new, refutations, batch)
+                ok, ids = self.survives(name, new, refutations, batch, candidate)
                 
                 self.log.append({
                     "attempt": attempt,
@@ -231,7 +224,7 @@ class PopperianProposer:
                 out[name] = new
             else:
                 # Keep parent instruction - reject the failing rewrite
-                out[name] = self.program.predictors()[name].signature.instructions
+                out[name] = candidate[name]
         
         return out
 
@@ -243,7 +236,7 @@ class PopperianArm(BaseArm):
         self,
         name: str,
         description: str,
-        budget_tracker: BudgetTracker,
+        budget_tracker: BudgetTracker | UnifiedBudget,
         max_metric_calls: int = 200,
         reflection_minibatch_size: int = 3,
         use_merge: bool = False,
@@ -270,8 +263,8 @@ class PopperianArm(BaseArm):
         metric: Callable,
         trainset: list,
         valset: list,
-        critic_lm: dspy.LM,
-        task_lm: dspy.LM,
+        task_lm=None,
+        reflection_lm=None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile with Popperian proposer.
@@ -281,13 +274,17 @@ class PopperianArm(BaseArm):
             metric: Evaluation metric
             trainset: Training examples
             valset: Validation examples
-            critic_lm: LM for critique/rewrite
+            reflection_lm: LM for critique/rewrite
             task_lm: LM for task execution
             **compile_kwargs: Additional args
             
         Returns:
             Optimized program
         """
+        task_lm = task_lm if task_lm is not None else dspy.settings.lm
+        reflection_lm = reflection_lm if reflection_lm is not None else dspy.settings.lm
+        if task_lm is None or reflection_lm is None:
+            raise ValueError("Both task_lm and reflection_lm are required")
         # Build gold lookup
         gold_by_question = {ex.question: ex for ex in trainset + valset}
         
@@ -296,7 +293,7 @@ class PopperianArm(BaseArm):
             program=program,
             metric=metric,
             gold_by_question=gold_by_question,
-            critic_lm=critic_lm,
+            critic_lm=reflection_lm,
             task_lm=task_lm,
             budget_tracker=self.budget_tracker,
             max_attempts=self.max_attempts,
@@ -313,18 +310,20 @@ class PopperianArm(BaseArm):
             use_merge=self.use_merge,
             seed=self.seed,
             track_stats=True,
+            num_threads=1,
             gepa_kwargs={
+                **self.kwargs,
                 "stop_callbacks": [self.budget_tracker],
-                **self.kwargs
             }
         )
         
         # Compile
-        optimized = gepa.compile(
-            program,
-            trainset=trainset,
-            valset=valset,
-        )
+        with dspy.context(lm=task_lm if task_lm is not None else dspy.settings.lm):
+            optimized = gepa.compile(
+                program,
+                trainset=trainset,
+                valset=valset,
+            )
         
         return optimized
     

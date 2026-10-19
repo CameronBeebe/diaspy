@@ -1,9 +1,9 @@
 """Base class for optimizer arms."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Callable
 import dspy
-from ..config import BudgetTracker
+from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
 
 class BaseArm(ABC):
@@ -13,7 +13,7 @@ class BaseArm(ABC):
         self,
         name: str,
         description: str,
-        budget_tracker: BudgetTracker,
+        budget_tracker: BudgetTracker | UnifiedBudget,
         **kwargs
     ):
         """Initialize arm.
@@ -36,6 +36,8 @@ class BaseArm(ABC):
         metric: Callable,
         trainset: list,
         valset: list,
+        task_lm=None,
+        reflection_lm=None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile/optimize the program.

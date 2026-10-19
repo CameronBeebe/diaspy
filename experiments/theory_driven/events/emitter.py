@@ -2,10 +2,9 @@
 
 import uuid
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 import difflib
 
-from .schema import (
+from experiments.theory_driven.events.schema import (
     EpistemicEvent,
     OptimizationStep,
     Conjecture,

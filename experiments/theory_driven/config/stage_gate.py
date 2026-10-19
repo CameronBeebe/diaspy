@@ -3,7 +3,6 @@
 Ensures smoke test passes required checks before pilot can run.
 """
 
-import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -27,7 +26,8 @@ class StageGateStatus:
     stage_id: int
     stage_name: str
     all_checks_passed: bool
-    checks: List[CheckResult]
+    # Checks are serialized dictionaries, including immediately after recording.
+    checks: List[Dict[str, Any]]
     gate_passed_at: Optional[str] = None
 
 
@@ -155,7 +155,7 @@ class StageGate:
         print(f"Overall: {'✓ PASSED' if status.all_checks_passed else '✗ FAILED'}")
         if status.gate_passed_at:
             print(f"Passed at: {status.gate_passed_at}")
-        print(f"\nChecks:")
+        print("\nChecks:")
         
         for check in status.checks:
             symbol = "✓" if check["passed"] else "✗"
