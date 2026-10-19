@@ -28,7 +28,7 @@ class BudgetTracker:
         self.cost_per_million_input = cost_per_million_input
         self.cost_per_million_output = cost_per_million_output
         
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # RLock to allow re-entrant access
         self._task_lm_calls = 0
         self._reflection_lm_calls = 0
         self._jev_calls = 0
