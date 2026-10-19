@@ -182,10 +182,12 @@ class ExperimentHarness:
         Returns:
             Benchmark instance
         """
-        if benchmark_name == "hover":
-            return HoVerBenchmark()
+        if benchmark_name == "simple_qa":
+            return SimpleQABenchmark(test_size=self.config.test_size)
+        elif benchmark_name == "hover":
+            return HoVerBenchmark(test_size=self.config.test_size)
         elif benchmark_name == "pupa":
-            return PUPABenchmark()
+            return PUPABenchmark(test_size=self.config.test_size)
         else:
             raise ValueError(f"Unknown benchmark: {benchmark_name}")
     
