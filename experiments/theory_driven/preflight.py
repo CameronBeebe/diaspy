@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from experiments.theory_driven.config import ExperimentConfig, StageConfig
+from experiments.theory_driven.config import ExperimentConfig, StageConfig, CanarySuite
 
 
 class PreFlightGate:
@@ -42,20 +42,25 @@ class PreFlightGate:
         reflection = multiplier * ("A" in stage.arms) * sum(stage.budgets)
         critic = multiplier * sum(arm in {"B", "C"} for arm in stage.arms) * sum(stage.budgets)
         test_calls = runs * stage.test_size
+        canary_calls = len(CanarySuite.DEFAULT_CANARIES) if stage.run_canary else 0
         return {
             "total_runs": runs,
             "optimization_call_cap": optimization,
             "test_calls": test_calls,
+            "canary_calls": canary_calls,
             "roles": {
+                "canary": {"calls": canary_calls},
                 "task": {"optimization_range": [0, optimization], "test": test_calls},
                 "reflection": {"optimization_range": [0, reflection], "test": 0},
                 "critic": {"optimization_range": [0, critic], "test": 0},
             },
-            "max_cost": 0.0 if all(m.endswith(":free") for m in stage.models) else None,
+            "max_cost": 0.0 if all(m.endswith(":free") for m in stage.models)
+                        and (not stage.run_canary or (stage.canary_model or stage.models[0]).endswith(":free")) else None,
             "cost_cap": stage.max_cost_dollars,
             "note": "Role ranges share the optimization cap; they are not additive. "
                     "GEPA may overshoot by one iteration, reported separately. "
-                    "Held-out evaluation adds task calls after optimization.",
+                    "Held-out evaluation adds task calls after optimization. "
+                    "Canary calls run before the arm loop; transient retries add provider attempts.",
         }
 
     def run_dry_run(self, stage_id: int, config: ExperimentConfig | None = None):

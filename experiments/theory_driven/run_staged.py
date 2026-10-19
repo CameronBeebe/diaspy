@@ -6,6 +6,7 @@ from pathlib import Path
 from experiments.theory_driven.config import ExperimentConfig, StageConfig
 from experiments.theory_driven.harness import ExperimentHarness
 from experiments.theory_driven.preflight import PreFlightGate
+from experiments.theory_driven.provider_runtime import ProviderRuntime
 
 
 def run_stage0(config: ExperimentConfig, *, harness: ExperimentHarness | None = None,
@@ -37,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Model execution requires --confirm; use --dry-run for offline planning")
     if not gate.run_all_checks(args.stage):
         return 1
-    results = run_stage0(config)
+    try:
+        results = run_stage0(config)
+    except Exception as error:
+        print(ProviderRuntime().sanitize(f"Stage 0 failed: {type(error).__name__}: {error}"))
+        return 1
     print(json.dumps(results, indent=2))
     return 0
 

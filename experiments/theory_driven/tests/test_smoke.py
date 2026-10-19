@@ -35,8 +35,12 @@ def scripted_lms():
 
 
 @pytest.fixture
-def tiny_run(tmp_path, caplog):
+def tiny_run(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.INFO)
+    from experiments.theory_driven import harness as harness_module
+    monkeypatch.setattr(harness_module, "run_stage_canary", lambda *args: {
+        "passed": True, "message": "mocked offline canary", "artifacts": {}, "total_cost": 0.0,
+    }, raising=False)
     from experiments.theory_driven.benchmarks import HotpotQABenchmark
     from experiments.theory_driven.harness import ExperimentHarness
     from experiments.theory_driven.run_staged import run_stage0
@@ -62,6 +66,8 @@ def tiny_run(tmp_path, caplog):
     results = run_stage0(config, harness=harness, stage=stage)
     assert "reflection failed" not in caplog.text
     assert "Traceback" not in caplog.text
+    for result in results:
+        result["_test_results_dir"] = str(tmp_path)
     return results, runs
 
 
@@ -80,6 +86,18 @@ def test_both_arms_complete_and_account_for_test_evaluation(tiny_run):
         assert stats["total_units"] == stats["optimization_calls"] + stats["test_calls"]
         assert stats["stop_triggered"]
         assert stats["total_cost"] == 0.0
+        import json
+        root = Path(result["_test_results_dir"])
+        call_rows = [json.loads(line) for line in (root / result["artifacts"]["lm_calls"]).read_text().splitlines()]
+        assert len(call_rows) == stats["total_units"]
+        assert all(row["error"] is None for row in call_rows)
+        events = [json.loads(line) for line in (root / result["artifacts"]["events"]).read_text().splitlines()]
+        assert events[0]["event_type"] == "initialization"
+        assert events[-1]["event_type"] == "finalization"
+        proposals = [event for event in events if event["event_type"] == "optimization_step"]
+        if result["arm"] == "B":
+            assert len(proposals) == len(result["arm_stats"]["proposer_log"])
+            assert all(not event["step"]["decision"]["accepted"] for event in proposals)
 
 
 def test_arm_patterns_differ_on_same_seed_and_data(tiny_run):
