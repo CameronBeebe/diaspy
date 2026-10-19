@@ -1,8 +1,12 @@
 # Theory-Driven Low-Budget Experiment
 
-Testing whether theory-driven optimizers beat GEPA's default reflection at LOW optimization budgets (50/100/200 total calls).
+**Status**: DRAFT - Critical bugs fixed Oct 19 2026, not tested end-to-end.
 
-**Status**: Plumbing complete. No paid runs yet. Results so far only show offline tests pass.
+See `PR_DESCRIPTION.md` for full status and what was fixed.
+
+---
+
+Testing whether theory-driven optimizers beat GEPA's default reflection at LOW optimization budgets (50/100/200 total calls).
 
 ## Overview
 
