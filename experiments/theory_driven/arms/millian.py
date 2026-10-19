@@ -15,7 +15,9 @@ from dspy.clients.base_lm import BaseLM
 from pydantic import BaseModel, Field
 
 from experiments.theory_driven.arms.base import BaseArm
-from experiments.theory_driven.arms.popperian import Critique, Refutation, Rewrite
+from experiments.theory_driven.arms.popperian import (
+    Critique, FailedAttempt, Refutation, Rewrite, normalize_instruction,
+)
 from experiments.theory_driven.arms.survival import AdmissionPolicy, Evidence, SurvivalEvaluator, get_policy
 from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
@@ -50,6 +52,8 @@ class DialecticalRewrite(dspy.Signature):
     current_instruction: str = dspy.InputField()
     refutations: list[Refutation] = dspy.InputField()
     rebuttals: list[Rebuttal] = dspy.InputField()
+    failed_attempts: list[FailedAttempt] = dspy.InputField(
+        desc="All failed rival rewrites this round with observed per-question scores. Do not repeat them.")
     new_instruction: str = dspy.OutputField()
     rejected_refutations: str = dspy.OutputField(desc="Rejected refutations and explanations, or none")
 
@@ -181,6 +185,15 @@ class MillianProposer:
             evidence=_evidence_dicts(scored), admitted=admitted, rationale=rationale, total_gain=gain,
         ), scored
 
+    def _score_unless_duplicate(self, candidate: dict[str, str], name: str, instruction: str,
+                                evidence: list[Evidence], seen: set[str],
+                                explanation: str = "") -> tuple[RewriteRecord, list[Evidence]]:
+        if normalize_instruction(instruction) in seen:
+            return RewriteRecord(new_instruction=instruction, rejected_refutations=explanation,
+                                 evidence=[], admitted=False, rationale={"reason": "duplicate_rewrite"},
+                                 total_gain=0), []
+        return self._score(candidate, name, instruction, evidence, explanation)
+
     def __call__(
         self,
         candidate: dict[str, str],
@@ -208,24 +221,66 @@ class MillianProposer:
                 ).rebuttals
             protected = sorted({index for rebuttal in rebuttals for index in rebuttal.protected_ids})
             with self._account("parent", calls, costs):
-                evidence = self.evaluator.prepare(candidate, refutations, batch, protected_ids=protected)
+                corroborated, parent_scores = self.evaluator.corroborate(candidate, refutations, batch)
+            if not corroborated:
+                reason = {"reason": "no_corroborated_counterexample", "decision": "received_view_survived"}
+                skipped = RewriteRecord(new_instruction=candidate[name], evidence=[], admitted=False,
+                                        rationale=reason, total_gain=0)
+                record = DebateRecord(
+                    policy=self.policy.name, predictor=name, old_instruction=candidate[name],
+                    refutations=refutations, rebuttals=rebuttals, joint_set=[],
+                    prosecution=skipped, millian=skipped, attempts=[], winner=None,
+                    received_view_survived=True, rationale=reason, role_calls=calls, role_costs=costs,
+                    calls_consumed=0, cost_consumed=0, survived=False, new_instruction=candidate[name],
+                ).model_dump(mode="json")
+                self.log.append(record)
+                if self.event_sink is not None:
+                    self.event_sink(record)
+                continue
+            evidence: list[Evidence] = []
+            prepared = False
+            self.evaluator.last_metadata = {}
             attempts: list[DebateAttempt] = []
+            failed_attempts: list[FailedAttempt] = []
+            seen = {normalize_instruction(candidate[name])}
             winner: Literal["prosecution", "millian"] | None = None
             for attempt in range(1, self.max_attempts + 1):
                 with self._account("prosecution_rewrite", calls, costs), dspy.context(lm=self.critic_lm):
-                    prosecution = self.rewrite(current_instruction=candidate[name], refutations=refutations)
+                    prosecution = self.rewrite(current_instruction=candidate[name], refutations=refutations,
+                                               failed_attempts=failed_attempts)
                 with self._account("millian_rewrite", calls, costs), dspy.context(lm=self.critic_lm):
                     millian = self.dialectical_rewrite(
                         current_instruction=candidate[name], refutations=refutations, rebuttals=rebuttals,
+                        failed_attempts=failed_attempts,
                     )
+                if not prepared and any(normalize_instruction(text) not in seen for text in
+                                        (prosecution.new_instruction, millian.new_instruction)):
+                    with self._account("parent", calls, costs):
+                        evidence = self.evaluator.prepare(candidate, refutations, batch,
+                                                          protected_ids=protected, parent_scores=parent_scores)
+                    prepared = True
                 with self._account("prosecution_survival", calls, costs):
-                    prosecution_record, prosecution_evidence = self._score(
-                        candidate, name, prosecution.new_instruction, evidence,
+                    prosecution_record, prosecution_evidence = self._score_unless_duplicate(
+                        candidate, name, prosecution.new_instruction, evidence, seen,
                     )
                 with self._account("millian_survival", calls, costs):
-                    millian_record, millian_evidence = self._score(
-                        candidate, name, millian.new_instruction, evidence, millian.rejected_refutations,
-                    )
+                    if normalize_instruction(millian.new_instruction) == normalize_instruction(prosecution.new_instruction):
+                        millian_record = prosecution_record.model_copy(deep=True, update={
+                            "new_instruction": millian.new_instruction,
+                            "rejected_refutations": millian.rejected_refutations,
+                            "rationale": {**prosecution_record.rationale, "evaluation_reused": True},
+                        })
+                        millian_evidence = prosecution_evidence
+                    else:
+                        millian_record, millian_evidence = self._score_unless_duplicate(
+                            candidate, name, millian.new_instruction, evidence, seen, millian.rejected_refutations,
+                        )
+                seen.update(normalize_instruction(text) for text in
+                            (prosecution.new_instruction, millian.new_instruction))
+                for rival, rows in ((prosecution_record, prosecution_evidence), (millian_record, millian_evidence)):
+                    if not rival.admitted:
+                        failed_attempts.append(FailedAttempt.from_evidence(
+                            rival.new_instruction, rows, rival.rationale["reason"], self.evaluator.eps))
                 passing = [(label, record, rows) for label, record, rows in (
                     ("prosecution", prosecution_record, prosecution_evidence),
                     ("millian", millian_record, millian_evidence),
@@ -250,6 +305,7 @@ class MillianProposer:
                 prosecution=final.prosecution, millian=final.millian, attempts=attempts, winner=winner,
                 received_view_survived=winner is None,
                 rationale={"decision": "received_view_survived" if winner is None else "rewrite_admitted",
+                           **self.evaluator.last_metadata,
                            "selection_order": ["total_gain", "shorter_instruction", "prosecution"]},
                 role_calls=calls, role_costs=costs, calls_consumed=sum(calls.values()),
                 cost_consumed=sum(costs.values()), survived=winner is not None, new_instruction=out[name],

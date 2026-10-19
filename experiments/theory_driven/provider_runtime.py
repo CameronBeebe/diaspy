@@ -9,9 +9,14 @@ attempt accounting. No process-global DSPy state is changed.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import json
+import math
 import os
 from pathlib import Path
+from random import random
 import re
 from threading import RLock
 import time
@@ -51,21 +56,81 @@ def provider_status(error: Exception) -> int | None:
     return None
 
 
+def retry_after_seconds(error: Exception, now: float) -> float | None:
+    """Read Retry-After across SDK wrappers; malformed hints are advisory only."""
+    seen = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for source in (current, getattr(current, "response", None)):
+            headers = getattr(source, "headers", None)
+            if not isinstance(headers, Mapping):
+                continue
+            for key, value in headers.items():
+                if str(key).lower() != "retry-after" or not isinstance(value, (str, int, float)):
+                    continue
+                try:
+                    seconds = float(value)
+                except (ValueError, TypeError):
+                    try:
+                        date = parsedate_to_datetime(str(value))
+                        if date.tzinfo is None:
+                            date = date.replace(tzinfo=timezone.utc)
+                        seconds = date.timestamp() - now
+                    except (ValueError, TypeError, OverflowError):
+                        continue
+                if math.isfinite(seconds) and seconds >= 0:
+                    return seconds
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def serving_provider(response) -> str | None:
+    """Read exposed response metadata, never requested routing/model prefixes.
+
+    BaseLM history retains the LiteLLM ModelResponse; newer DSPy engines
+    retain a tuple of canonical responses with the wire body in provider_data.
+    LiteLLM's custom_llm_provider describes the API adapter (e.g. OpenRouter),
+    not necessarily the provider that served the model, so ignore it.
+    """
+    if isinstance(response, (list, tuple)):
+        providers = {serving_provider(item) for item in response}
+        return providers.pop() if len(providers) == 1 else None
+
+    def field(source, key):
+        return source.get(key) if isinstance(source, Mapping) else getattr(source, key, None)
+
+    for source in (response, field(response, "provider_data"), field(response, "_hidden_params")):
+        for key in ("provider", "provider_name"):
+            value = field(source, key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
 class ProviderRuntime:
-    """One shared latch across task/reflection/critic, including LM copies."""
+    """One shared latch across task/reflection/critic, including LM copies.
+
+    Only 429s retry: five retries by default, with 2/4/8/16/32 seconds plus
+    uniform [0, 1) second jitter, capped at 60 seconds. Retry-After is a
+    minimum and may exceed that cap. Inject sleep, random and a UNIX clock
+    for deterministic offline tests; no internal SDK retries are permitted.
+    """
 
     def __init__(self, *, secrets=(), text_limit: int = 1000,
-                 max_retries: int = 2, backoff_seconds: float = 1.0,
-                 sleep=time.sleep):
+                 max_retries: int = 5, backoff_seconds: float = 2.0,
+                 sleep=time.sleep, random=random, clock=time.time):
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 0 <= max_retries <= 5:
             raise ValueError("max_retries must be an integer between 0 and 5")
-        if not 0 <= backoff_seconds <= 30:
-            raise ValueError("backoff_seconds must be between 0 and 30")
+        if not 0 <= backoff_seconds <= 60:
+            raise ValueError("backoff_seconds must be between 0 and 60")
         if text_limit < 1:
             raise ValueError("text_limit must be positive")
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
         self._sleep = sleep
+        self._random = random
+        self._clock = clock
         self.text_limit = text_limit
         self._secrets = set(filter(None, secrets))
         self._secrets.update(value for key, value in os.environ.items()
@@ -93,7 +158,7 @@ class ProviderRuntime:
             lm.kwargs.pop(key, None)
         return GuardedLM(lm, self, role)
 
-    def sanitize(self, value) -> str:
+    def sanitize(self, value, *, truncate: bool = True) -> str:
         text = str(value)
         for secret in sorted(self._secrets, key=len, reverse=True):
             text = text.replace(secret, "[REDACTED]")
@@ -101,7 +166,7 @@ class ProviderRuntime:
         text = re.sub(r"(?i)Bearer\s+[^\s'\",;]+", "Bearer [REDACTED]", text)
         text = re.sub(r'''(?i)(["']?(?:api[_-]?key|access[_-]?token|password|secret)["']?\s*[:=]\s*)["']?[^\s'",;}]+["']?''',
                       r"\1[REDACTED]", text)
-        return text[:self.text_limit]
+        return text[:self.text_limit] if truncate else text
 
     def _learn_secrets(self, values):
         for key, value in values.items():
@@ -141,7 +206,10 @@ class ProviderRuntime:
                     trace.update(status_code=status, error=self.sanitize(error))
                     self.attempts.append(trace)
                     if status == 429 and attempt < self.max_retries:
-                        self._sleep(min(self.backoff_seconds * 2 ** attempt, 30.0))
+                        delay = min(self.backoff_seconds * 2 ** attempt + self._random(), 60.0)
+                        # Cap our backoff, not the server's minimum wait.
+                        retry_after = retry_after_seconds(error, self._clock())
+                        self._sleep(max(delay, retry_after or 0.0))
                         continue
                     if status in (400, 401, 404, 429):
                         self.failure = ProviderFailure(self.sanitize(f"{role} {lm.model}: {error}"))
@@ -152,6 +220,9 @@ class ProviderRuntime:
             trace["response"] = self.sanitize(result)
             if len(lm.history) > history_size:
                 entry = lm.history[-1]
+                provider = serving_provider(entry.get("response"))
+                if provider is not None:
+                    trace["provider"] = self.sanitize(provider)
                 trace["usage"] = {key: value for key, value in entry.get("usage", {}).items()
                                   if key in ("prompt_tokens", "completion_tokens", "total_tokens",
                                              "input_tokens", "output_tokens")

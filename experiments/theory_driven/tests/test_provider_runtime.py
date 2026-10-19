@@ -13,9 +13,12 @@ def runtime_module():
 
 
 class StatusError(Exception):
-    def __init__(self, status, message="reasoning: expected object, received boolean"):
+    def __init__(self, status, message="reasoning: expected object, received boolean",
+                 *, response=None, headers=None):
         super().__init__(message)
         self.status_code = status
+        self.response = response
+        self.headers = headers
 
 
 class FailingEngine:
@@ -31,8 +34,8 @@ class FailingEngine:
 @pytest.mark.parametrize("status", [400, 401, 404])
 def test_fatal_error_latches_across_roles_and_swallowed_calls(status):
     module = runtime_module()
-    runtime = module.ProviderRuntime()
-    first = FailingEngine(StatusError(status))
+    runtime = module.ProviderRuntime(sleep=lambda _: pytest.fail("fatal status retried"))
+    first = FailingEngine(StatusError(status, headers={"Retry-After": "100"}))
     second = FailingEngine(StatusError(status))
     task = runtime.wrap(dspy.LM("openai/offline", engine=first, cache=False), "task")
     critic = runtime.wrap(dspy.LM("openai/offline", engine=second, cache=False), "critic")
@@ -79,6 +82,71 @@ def test_success_traces_are_compact_sanitized_and_keep_history(tmp_path):
     assert json.loads(text) == trace
 
 
+@pytest.mark.parametrize("location", ["provider", "hidden_provider", "hidden_provider_name", "native"])
+def test_serving_provider_is_read_from_real_history_response_and_sanitized(location, tmp_path):
+    import json
+    from dataclasses import replace
+    from litellm import ModelResponse
+
+    module = runtime_module()
+    provider = "DeepInfra opaque-provider-credential"
+    response = ModelResponse(
+        model="offline", choices=[{"message": {"role": "assistant", "content": "ok"}}],
+        usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        **({"provider": provider} if location == "provider" else {}),
+    )
+    response._hidden_params = {"response_cost": 0.01, "custom_llm_provider": "openrouter"}
+    if location.startswith("hidden_"):
+        response._hidden_params[location.removeprefix("hidden_")] = provider
+
+    class ResponseLM(dspy.BaseLM):
+        def forward(self, prompt=None, messages=None, **kwargs):
+            return response
+
+    class ProviderEngine(ScriptedEngine):
+        def complete(self, request):
+            return replace(super().complete(request), provider_data={"provider": provider})
+
+    raw = (dspy.LM("openai/offline", engine=ProviderEngine([]), cache=False)
+           if location == "native" else ResponseLM("openrouter/offline", cache=False))
+    runtime = module.ProviderRuntime(secrets=["opaque-provider-credential"])
+    lm = runtime.wrap(raw, "task")
+    assert "ok" in lm("hello")[0]
+    assert runtime.attempts[-1]["provider"] == "DeepInfra [REDACTED]"
+    assert lm.history is raw.history
+    assert len(raw.history) == 1
+    if location != "native":
+        assert raw.history[-1]["response"] is response
+        assert runtime.attempts[-1]["cost"] == 0.01
+        assert runtime.attempts[-1]["usage"]["total_tokens"] == 3
+    artifact = tmp_path / "calls.jsonl"
+    runtime.write_jsonl(artifact)
+    assert json.loads(artifact.read_text())["provider"] == "DeepInfra [REDACTED]"
+
+
+@pytest.mark.parametrize("response", [
+    {}, {"provider": {"order": ["DeepInfra"]}}, {"provider": ""},
+    {"_hidden_params": {"custom_llm_provider": "openrouter"}},
+    {"model": "deepinfra/offline"},
+])
+def test_serving_provider_does_not_infer_routing_or_model(response):
+    from dspy.utils.dummies import DummyLM
+
+    module = runtime_module()
+
+    class ResponseLM(DummyLM):
+        def update_history(self, entry):
+            super().update_history({**entry, "response": response})
+
+    raw = ResponseLM([{"answer": "ok"}])
+    raw.kwargs["provider"] = {"order": ["DeepInfra"]}
+    runtime = module.ProviderRuntime()
+    lm = runtime.wrap(raw, "task")
+    lm("hello")
+    assert runtime.attempts[-1].get("provider") is None
+    assert raw.history[-1]["response"] == response
+
+
 def test_failure_text_and_exception_are_sanitized(monkeypatch):
     module = runtime_module()
     monkeypatch.setenv("OPENROUTER_API_KEY", "opaque-env-key")
@@ -108,10 +176,32 @@ class ScriptedEngine:
         return self.success.complete(request)
 
 
+@pytest.mark.parametrize("backoff,expected", [
+    (2.0, [2.25, 4.25, 8.25, 16.25, 32.25]),
+    (30.0, [30.25, 60.0, 60.0, 60.0, 60.0]),
+    (60.0, [60.0, 60.0, 60.0, 60.0, 60.0]),
+])
+def test_default_five_retries_recover_with_capped_injected_jitter(backoff, expected):
+    module = runtime_module()
+    delays = []
+    runtime = module.ProviderRuntime(
+        backoff_seconds=backoff, sleep=delays.append, random=lambda: 0.25,
+    )
+    engine = ScriptedEngine([StatusError(429) for _ in range(5)])
+    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
+    assert "ok" in lm("hello")[0]
+    assert engine.calls == 6
+    assert delays == expected
+    assert [row["attempt"] for row in runtime.attempts] == [1, 2, 3, 4, 5, 6]
+    assert [row["status_code"] for row in runtime.attempts] == [429] * 5 + [None]
+    assert not runtime.failed
+
+
 def test_rate_limit_only_bounded_exponential_retry_records_every_attempt():
     module = runtime_module()
     delays = []
-    runtime = module.ProviderRuntime(max_retries=2, backoff_seconds=0.5, sleep=delays.append)
+    runtime = module.ProviderRuntime(max_retries=2, backoff_seconds=0.5, sleep=delays.append,
+                                     random=lambda: 0.0)
     engine = ScriptedEngine([StatusError(429), StatusError(429)])
     lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False, num_retries=9), "task")
     assert "ok" in lm("hello")[0]
@@ -122,17 +212,53 @@ def test_rate_limit_only_bounded_exponential_retry_records_every_attempt():
     assert not runtime.failed
 
 
+@pytest.mark.parametrize("header,expected", [
+    ("7", 7.0), ("1", 2.25), ("120", 120.0), ("2.5", 2.5),
+    ("Thu, 01 Jan 1970 00:16:50 GMT", 10.0),
+    ("Thu, 01 Jan 1970 00:16:39 GMT", 2.25),
+    ("invalid", 2.25), ("-1", 2.25), ("nan", 2.25), ("inf", 2.25),
+    (None, 2.25),
+])
+@pytest.mark.parametrize("location", ["response", "exception"])
+def test_retry_after_is_minimum_delay_from_chained_error(header, expected, location):
+    from types import SimpleNamespace
+
+    module = runtime_module()
+    error = StatusError(429)
+    headers = {"rEtRy-AfTeR": header}
+    if location == "response":
+        error.response = SimpleNamespace(headers=headers)
+    else:
+        error.headers = headers
+    wrapped = RuntimeError("sdk wrapper")
+    wrapped.__cause__ = error
+    delays = []
+    runtime = module.ProviderRuntime(
+        sleep=delays.append, random=lambda: 0.25, clock=lambda: 1000.0,
+    )
+    engine = ScriptedEngine([wrapped])
+    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
+    assert "ok" in lm("hello")[0]
+    assert delays == [expected]
+    assert engine.calls == 2
+    assert not runtime.failed
+
+
 def test_exhausted_rate_limit_is_latched_not_retried_by_outer_optimizer():
     module = runtime_module()
     delays = []
-    runtime = module.ProviderRuntime(max_retries=2, sleep=delays.append)
+    runtime = module.ProviderRuntime(sleep=delays.append, random=lambda: 0.5)
     engine = FailingEngine(StatusError(429, "free pool exhausted"))
     lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
-    for _ in range(4):
+    critic_engine = ScriptedEngine([])
+    critic = runtime.wrap(dspy.LM("openai/offline", engine=critic_engine, cache=False), "critic")
+    for target in (lm, lm, lm.copy(), critic):
         with pytest.raises(module.ProviderFailure, match="free pool exhausted"):
-            lm("hello")
-    assert engine.calls == 3
-    assert len(delays) == 2
+            target("hello")
+    assert engine.calls == 6
+    assert critic_engine.calls == 0
+    assert delays == [2.5, 4.5, 8.5, 16.5, 32.5]
+    assert len(runtime.attempts) == 6
     assert runtime.failed
 
 
@@ -150,6 +276,33 @@ def test_dspy_error_classes_without_status(error_class, status):
         lm("hello")
     assert runtime.attempts[0]["status_code"] == status
     assert engine.calls == 1
+
+
+@pytest.mark.parametrize("status", [403, 408, 500, 503])
+def test_other_http_statuses_are_not_retried_or_latched(status):
+    module = runtime_module()
+    runtime = module.ProviderRuntime(sleep=lambda _: pytest.fail("unexpected retry"))
+    engine = FailingEngine(StatusError(status, headers={"Retry-After": "10"}))
+    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
+    with pytest.raises(Exception):
+        lm("hello")
+    assert engine.calls == 1
+    assert not runtime.failed
+
+
+def test_provider_metadata_does_not_reuse_history_when_history_is_disabled():
+    from dspy.utils.dummies import DummyLM
+
+    module = runtime_module()
+    raw = DummyLM([{"answer": "ok"}])
+    raw.history.append({"response": {"provider": "stale"}, "cost": 10.0})
+    runtime = module.ProviderRuntime()
+    lm = runtime.wrap(raw, "task")
+    with dspy.context(disable_history=True):
+        lm("hello")
+    assert runtime.attempts[-1].get("provider") is None
+    assert runtime.attempts[-1]["cost"] is None
+    assert len(raw.history) == 1
 
 
 def test_non_provider_programming_errors_are_not_latched_or_retried():
@@ -228,7 +381,8 @@ def test_call_and_copy_cannot_restore_internal_retry_options():
 
 @pytest.mark.parametrize("options", [{"max_retries": -1}, {"max_retries": 100},
                                      {"max_retries": True}, {"backoff_seconds": -1},
-                                     {"text_limit": 0}])
+                                     {"backoff_seconds": 60.1}, {"backoff_seconds": float("nan")},
+                                     {"backoff_seconds": float("inf")}, {"text_limit": 0}])
 def test_runtime_rejects_unbounded_or_invalid_settings(options):
     module = runtime_module()
     with pytest.raises(ValueError):

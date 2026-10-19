@@ -22,6 +22,8 @@ class ModelConfig:
     # Reasoning control (OpenRouter's reasoning parameter)
     # For Qwen3.5: set to False to disable thinking/reasoning tokens
     enable_reasoning: bool = False
+    provider_allow_fallbacks: bool = False
+    provider_order: List[str] = field(default_factory=list)
     
     # Alternative models
     baseline_check_model: str = "openrouter/openai/gpt-4.1-mini"  # For published baseline check
@@ -54,6 +56,8 @@ class ModelConfig:
             task_model=os.getenv("TASK_MODEL", "openrouter/qwen/qwen3.5-9b"),
             reflection_model=os.getenv("REFLECTION_MODEL", "openrouter/qwen/qwen3.5-9b"),
             enable_reasoning=os.getenv("ENABLE_REASONING", "false").lower() == "true",
+            provider_allow_fallbacks=os.getenv("OPENROUTER_ALLOW_FALLBACKS", "false").lower() == "true",
+            provider_order=[p.strip() for p in os.getenv("OPENROUTER_PROVIDER_ORDER", "").split(",") if p.strip()],
             baseline_check_model=os.getenv("BASELINE_CHECK_MODEL", "openrouter/openai/gpt-4.1-mini"),
             strong_model=os.getenv("STRONG_MODEL", "xai/grok-4.3"),
             strong_model_reasoning_effort=os.getenv("STRONG_MODEL_REASONING_EFFORT", "none"),
@@ -100,13 +104,15 @@ class ModelConfig:
         # OpenRouter provider pinning
         if "openrouter/" in model and pin_provider:
             provider_config: Dict[str, Any] = {
-                "allow_fallbacks": False,  # Fail instead of falling back
+                "allow_fallbacks": self.provider_allow_fallbacks,  # Same-model providers only
                 "require_parameters": True,  # Require our params to be respected
             }
             
             if provider_name:
                 # Pin to specific provider
                 provider_config["order"] = [provider_name]
+            elif self.provider_order:
+                provider_config["order"] = list(self.provider_order)
             
             extra_body["provider"] = provider_config
         
@@ -309,7 +315,7 @@ class ExperimentConfig:
     def get_stage_config(self, stage_id: int) -> StageConfig:
         """Get configuration for a specific stage.
         
-        Stage 0 (smoke): $1 cap, HotpotQA, A/B/M, budget 50, 1 seed, 50-item test
+        Stage 0 (smoke): $1 cap, HotpotQA, A/B/M policy variants, budget 100, 1 seed, 50-item test
         Stage 1 (pilot): $5 cap, HoVer, 5 arms, budgets 50/100, 2 seeds, 100-item test
         Stage 2 (cross-model): $25 cap, same as pilot but 2-3 models
         """
@@ -321,11 +327,11 @@ class ExperimentConfig:
                 name="smoke",
                 description="Stage-zero Qwen smoke test with a $1 cap",
                 max_cost_dollars=1.0,
-                budgets=[50],
+                budgets=[100],
                 n_seeds=1,
                 test_size=self.test_size,
                 benchmarks=["hotpotqa"],
-                arms=["A", "B", "M"],
+                arms=["A", "B@half_no_regress", "M@half_no_regress", "B@majority"],
                 survival_policy="majority",
                 min_survival_questions=3,
                 models=[smoke_model],

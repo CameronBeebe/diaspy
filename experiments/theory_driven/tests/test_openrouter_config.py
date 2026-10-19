@@ -16,5 +16,13 @@ def test_openrouter_reasoning_is_object(enabled):
     }
 
 
+def test_provider_fallback_keeps_model_and_order():
+    config = ModelConfig(provider_allow_fallbacks=True, provider_order=["DeepInfra", "Together"])
+    kwargs = config.get_litellm_kwargs(config.task_model)
+    assert kwargs["extra_body"]["provider"]["allow_fallbacks"] is True
+    assert kwargs["extra_body"]["provider"]["order"] == ["DeepInfra", "Together"]
+    assert config.task_model == "openrouter/qwen/qwen3.5-9b"
+
+
 def test_non_openrouter_does_not_get_reasoning_object():
     assert "extra_body" not in ModelConfig().get_litellm_kwargs("openai/example")
