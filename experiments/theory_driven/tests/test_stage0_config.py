@@ -23,3 +23,5 @@ def test_free_model_plan_has_zero_cost_and_separate_roles():
     assert plan["total_runs"] == 2
     assert {"task", "reflection", "critic"} <= plan["roles"].keys()
     assert plan["test_calls"] == 100
+    assert plan["canary_calls"] == 8
+    assert plan["roles"]["canary"]["calls"] == 8

@@ -73,8 +73,7 @@ class ModelConfig:
     ) -> Dict[str, Any]:
         """Get LiteLLM kwargs for a model, including reasoning control and provider pinning.
         
-        Per OpenRouter docs: pass reasoning=False via extra_body for models
-        that support reasoning/thinking tokens (Qwen3.5, etc).
+        OpenRouter reasoning uses an object with an enabled flag in extra_body.
         
         Per xAI docs: pass reasoning_effort='none' for Grok models.
         
@@ -94,10 +93,9 @@ class ModelConfig:
         extra_body = {}
         
         # OpenRouter reasoning control
-        if "openrouter/" in model and not self.enable_reasoning:
-            # OpenRouter: pass reasoning parameter via extra_body
-            # This disables thinking/reasoning tokens for models that support them
-            extra_body["reasoning"] = False
+        if "openrouter/" in model:
+            # OpenRouter validates reasoning as an object, never a bare boolean.
+            extra_body["reasoning"] = {"enabled": self.enable_reasoning}
         
         # OpenRouter provider pinning
         if "openrouter/" in model and pin_provider:

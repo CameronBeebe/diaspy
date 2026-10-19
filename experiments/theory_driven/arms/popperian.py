@@ -59,6 +59,7 @@ class PopperianProposer:
         max_attempts: int = 2,
         severity_tau: float = 0.5,
         archive_cap: int = 6,
+        event_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """Initialize Popperian proposer.
         
@@ -72,6 +73,7 @@ class PopperianProposer:
             max_attempts: Maximum rewrite attempts per iteration
             severity_tau: Minimum severity for archive inclusion
             archive_cap: Maximum archive size
+            event_sink: Immediate survival-admission event callback (not GEPA acceptance)
         """
         self.program = program
         self.metric = metric
@@ -82,6 +84,7 @@ class PopperianProposer:
         self.max_attempts = max_attempts
         self.tau = severity_tau
         self.archive_cap = archive_cap
+        self.event_sink = event_sink
         
         self.critique = dspy.Predict(Critique)
         self.rewrite = dspy.Predict(Rewrite)
@@ -139,14 +142,16 @@ class PopperianProposer:
         assert signature is not None
         predictor.signature = signature.with_instructions(instruction)
         
+        tested_questions = []
         with dspy.context(lm=self.task_lm):
             for q in questions:
                 gold = self.gold[q]
                 pred = prog(**gold.inputs())
+                tested_questions.append(q)
                 
                 
                 if self.metric(gold, pred, None, None, None).score < 1:
-                    return False, questions
+                    return False, tested_questions
         
         # Survived: archive this round's counterexamples
         for q in questions[:len(ids)]:
@@ -184,6 +189,9 @@ class PopperianProposer:
             )
             
             # Critique with reflection LM
+            # Attribute the shared critique to the first rewrite attempt only.
+            calls_before = self.budget_tracker.total_units
+            cost_before = self.budget_tracker.total_cost
             with dspy.context(lm=self.critic_lm):
                 critique_result = self.critique(
                     current_instruction=candidate[name],
@@ -207,13 +215,24 @@ class PopperianProposer:
                 # Survival check
                 ok, ids = self.survives(name, new, refutations, batch, candidate)
                 
-                self.log.append({
+                record = {
                     "attempt": attempt,
+                    "predictor": name,
+                    "old_instruction": candidate[name],
                     "n_refutations": len(refutations),
+                    "refutations": [r.model_dump() for r in refutations],
                     "checked_ids": ids,
+                    "tested_questions": ids,
                     "survived": ok,
                     "new_instruction": new,
-                })
+                    "calls_consumed": self.budget_tracker.total_units - calls_before,
+                    "cost_consumed": self.budget_tracker.total_cost - cost_before,
+                }
+                self.log.append(record)
+                if self.event_sink is not None:
+                    self.event_sink(record)
+                calls_before = self.budget_tracker.total_units
+                cost_before = self.budget_tracker.total_cost
                 
                 if ok:
                     break
@@ -265,6 +284,7 @@ class PopperianArm(BaseArm):
         valset: list,
         task_lm=None,
         reflection_lm=None,
+        event_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
         **compile_kwargs
     ) -> dspy.Module:
         """Compile with Popperian proposer.
@@ -276,6 +296,7 @@ class PopperianArm(BaseArm):
             valset: Validation examples
             reflection_lm: LM for critique/rewrite
             task_lm: LM for task execution
+            event_sink: Immediate proposal survival-admission callback
             **compile_kwargs: Additional args
             
         Returns:
@@ -299,6 +320,7 @@ class PopperianArm(BaseArm):
             max_attempts=self.max_attempts,
             severity_tau=self.severity_tau,
             archive_cap=self.archive_cap,
+            event_sink=event_sink,
         )
         
         # Create GEPA with custom proposer

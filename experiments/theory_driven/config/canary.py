@@ -9,8 +9,24 @@ import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 import difflib
+import os
+import re
+
+
+def safe_canary_error(error: Exception) -> str:
+    """Retain provider diagnostics without credential values or auth headers."""
+    text = f"{type(error).__name__}: {error}"
+    for name, value in os.environ.items():
+        if value and any(token in name.upper() for token in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
+            text = text.replace(value, "[REDACTED]")
+    text = re.sub(r"(?i)bearer\s+[^\s,;\"'}]+", "Bearer [REDACTED]", text)
+    text = re.sub(
+        r"(?i)((?:api[_-]?key|authorization|access[_-]?token|password)[\"']?\s*[:=]\s*)[^\n;,}]+",
+        r"\1[REDACTED]", text,
+    )
+    return re.sub(r"\bsk-[\w-]+", "[REDACTED]", text)[:2000]
 
 
 @dataclass
@@ -44,6 +60,7 @@ class CanaryResult:
     input_tokens: int = 0
     output_tokens: int = 0
     cost: Optional[float] = None
+    error: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -148,7 +165,7 @@ class CanarySuite:
         
         reference = {
             "model": model,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "prompts": {
                 result.prompt_id: {
                     "prompt": result.prompt,
@@ -169,7 +186,7 @@ class CanarySuite:
         temperature: float = 0.0,
         seed: Optional[int] = 42,
     ) -> List[CanaryResult]:
-        """Run all canary prompts.
+        """Run canary prompts, stopping and recording the first provider error.
         
         Args:
             lm: DSPy LM instance
@@ -183,19 +200,23 @@ class CanarySuite:
         import dspy
         
         results = []
+        self.results = results
         
         for canary in self.prompts:
             # Simple completion
             try:
                 # Configure LM with temperature 0
                 with dspy.context(lm=lm):
-                    # Use ChainOfThought with canary prompt
+                    # Use a plain predictor with the fixed canary prompt.
                     class SimpleQA(dspy.Signature):
                         question: str = dspy.InputField()
                         answer: str = dspy.OutputField()
                     
                     predictor = dspy.Predict(SimpleQA)
-                    response = predictor(question=canary.prompt)
+                    generation = {"temperature": temperature, "cache": False}
+                    if seed is not None:
+                        generation["seed"] = seed
+                    response = predictor(question=canary.prompt, config=generation)
                     output = response.answer
                 
                 # Hash output
@@ -203,7 +224,7 @@ class CanarySuite:
                 
                 result = CanaryResult(
                     prompt_id=canary.id,
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                     model=model,
                     provider=None,  # Would extract from response
                     prompt=canary.prompt,
@@ -214,18 +235,19 @@ class CanarySuite:
                 results.append(result)
                 
             except Exception as e:
-                print(f"Canary {canary.id} failed: {e}")
                 # Record failure
                 result = CanaryResult(
                     prompt_id=canary.id,
-                    timestamp=datetime.utcnow().isoformat(),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                     model=model,
                     provider=None,
                     prompt=canary.prompt,
-                    output=f"ERROR: {str(e)}",
+                    output="",
                     output_hash="",
+                    error=safe_canary_error(e),
                 )
                 results.append(result)
+                break
         
         self.results = results
         return results
@@ -351,7 +373,7 @@ class CanarySuite:
             output_file: Path to save results
         """
         data = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "results": [r.to_dict() for r in self.results],
         }
         

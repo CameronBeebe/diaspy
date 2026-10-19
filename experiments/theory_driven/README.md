@@ -24,7 +24,16 @@ your environment, then use the same entry point with `--confirm` instead of
 `--dry-run`. The configured model is
 `openrouter/google/gemma-4-26b-a4b-it:free`. No real-model run is part of the
 offline checks. Free-model availability and response quality are not validated
-by these checks.
+by these checks. Live runs execute the canary suite before either arm; the
+first successful canary establishes a baseline. Provider failures block the
+stage, while `allow_canary_drift` controls reference drift only. OpenRouter
+reasoning uses `{"enabled": false}`; provider pinning is unchanged. The shared
+provider guard retries HTTP 429 twice (1s/2s backoff), never retries 400/401/404,
+and never changes models. DSPy retries are disabled to avoid nested retries.
+Any failed arm stops the stage with exit code 1; use `set -o pipefail` if piping
+through `tee`. Result JSON points to sanitized compact LM-attempt logs and
+sparse epistemic events (B decisions mean survival admission, not GEPA's final
+acceptance). Canary artifacts are under `results/canaries/`.
 
 Each run has a shared 50-call optimization budget across task, reflection and
 critic histories. GEPA checks the stopper between iterations, so one iteration

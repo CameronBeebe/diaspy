@@ -87,4 +87,6 @@ def test_lm_construction_disables_cache_for_each_role(monkeypatch):
     lms = create_lms(ModelConfig(), 17)
     assert len(lms) == len(calls) == 3
     assert all(call["cache"] is False and call["seed"] == 17 for call in calls)
+    assert all(call["num_retries"] == 0 for call in calls)  # Guard owns 429 retries, not DSPy.
+    assert all(call["extra_body"]["reasoning"] == {"enabled": False} for call in calls)
     assert len({id(lm) for lm in lms.values()}) == 3
