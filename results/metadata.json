@@ -1,0 +1,33 @@
+{
+  "config": {
+    "arms": [
+      "A0"
+    ],
+    "n_labels": [
+      10
+    ],
+    "seeds": [
+      0
+    ],
+    "budget": {
+      "max_program_rollouts": 20,
+      "max_reflection_calls": 60,
+      "max_reflection_tokens": 300000,
+      "tolerance": 0.05
+    },
+    "task_model": null,
+    "reflection_model": null,
+    "task": "ifbench",
+    "results_dir": "results",
+    "checkpoint_dir": "checkpoints",
+    "gepa_reflection_minibatch_size": 3,
+    "gepa_use_merge": false,
+    "proposer_max_attempts": 2,
+    "proposer_tau": 0.5,
+    "proposer_archive_cap": 6,
+    "simba_max_demos": 0,
+    "simba_bsize": null
+  },
+  "use_dummy_lm": true,
+  "created_at": "2026-10-19T02:42:14.058550"
+}
