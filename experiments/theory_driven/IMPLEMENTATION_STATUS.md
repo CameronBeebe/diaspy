@@ -63,6 +63,7 @@
 - [x] Known-answer tests (test_known_answers.py)
 - [x] Arm distinctness tests (test_arm_distinctness.py)
 - [x] Data integrity tests (test_data_integrity.py)
+- [x] Event emission tests (test_event_emission.py) - 12 tests ✨ NEW
 
 ### Documentation
 - [x] README with usage instructions
@@ -205,9 +206,14 @@
 
 ## Test Counts (Actual)
 
-- **Unit tests**: 17 (5 in test_arms_offline, 5 in test_known_answers, 5 in test_arm_distinctness, 2 in test_data_integrity)
+- **Unit tests**: 29 total
+  - 5 in test_arms_offline
+  - 6 in test_known_answers
+  - 5 in test_arm_distinctness
+  - 5 in test_data_integrity
+  - 12 in test_event_emission ✨ NEW
 - **Integration tests**: 1 (test_end_to_end_dummy)
 - **Pre-flight checks**: 6 (code quality, offline tests, known answers, arm distinctness, data integrity, dry-run)
-- **Total test assertions**: ~50+
+- **Total test assertions**: ~80+
 
 All tests run offline with DummyLM. No real LM calls made.
