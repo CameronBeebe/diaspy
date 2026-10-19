@@ -53,6 +53,17 @@ class RunTrace:
 
     def proposal(self, record: dict[str, Any]) -> None:
         """Persist survival admission, never GEPA's later acceptance decision."""
+        if record.get("kind") == "millian_debate":
+            # The typed debate record contains both rivals, not a fictitious single step.
+            event = EpistemicEvent(
+                event_id=uuid4().hex, event_type="optimization_step",
+                experiment_name=self.emitter.experiment_name,
+                benchmark_name=self.emitter.benchmark_name, run_id=self.run_id,
+                metadata={"decision_scope": "proposal_survival_admission", "debate": record},
+            )
+            self.emitter.events.append(event)
+            self._persist()
+            return
         survived = bool(record["survived"])
         questions = record["tested_questions"]
         reason = (
@@ -77,13 +88,13 @@ class RunTrace:
                 test_type="survival_check",
                 # Questions, including archived cases, have no stable dataset IDs.
                 example_ids=[], example_count=len(questions),
-                selection_rationale="High-severity counterexamples and archived regression questions",
+                selection_rationale="Mechanically corroborated counterexamples, archive and padding",
                 test_cost_units=len(questions),
             ),
             test_outcome=TestOutcome(
                 passed=survived, score=float(survived), example_scores=[],
                 survival_check=True, survived=survived,
-                feedback="Binary survival outcome; individual metric scores not recorded",
+                feedback="Admission policy outcome; per-question scores are in event metadata",
             ),
             decision=AcceptRejectDecision(
                 accepted=survived, decision_reason=reason,
@@ -96,6 +107,8 @@ class RunTrace:
         event.metadata = {
             "decision_scope": "proposal_survival_admission",
             "attempt": record["attempt"], "tested_questions": questions,
+            **{key: record[key] for key in ("policy", "evidence", "rationale", "severity_usage")
+               if key in record},
         }
         self._persist()
 

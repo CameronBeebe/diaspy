@@ -166,6 +166,8 @@ class StageConfig:
     run_canary: bool = True
     canary_model: Optional[str] = None  # Model for canaries (can use free tier for smoke)
     allow_canary_drift: bool = False  # If False, stage blocks on drift detection
+    survival_policy: str = "strict"
+    min_survival_questions: int = 3
 
 
 @dataclass
@@ -215,6 +217,11 @@ class ExperimentConfig:
             name="B",
             arm_type="popperian",
             description="GEPA + typed Popperian proposer with Refutation objects",
+        ),
+        ArmConfig(
+            name="M",
+            arm_type="millian",
+            description="Millian adversarial discussion with rival rewrites",
         ),
         ArmConfig(
             name="K-Jev",
@@ -302,26 +309,26 @@ class ExperimentConfig:
     def get_stage_config(self, stage_id: int) -> StageConfig:
         """Get configuration for a specific stage.
         
-        Stage 0 (smoke): $1 cap, 1 benchmark, 2 arms, budget 50, 1 seed, 20-item test
+        Stage 0 (smoke): $1 cap, HotpotQA, A/B/M, budget 50, 1 seed, 50-item test
         Stage 1 (pilot): $5 cap, HoVer, 5 arms, budgets 50/100, 2 seeds, 100-item test
         Stage 2 (cross-model): $25 cap, same as pilot but 2-3 models
         """
         if stage_id == 0:
-            # Stage 0 uses free-tier model for $0 smoke test
-            # WARNING: Free providers may log prompts and change without notice
-            free_model = "openrouter/google/gemma-4-26b-a4b-it:free"
+            smoke_model = "openrouter/qwen/qwen3.5-9b"
             
             return StageConfig(
                 stage_id=0,
                 name="smoke",
-                description="$0 smoke test with free model",
-                max_cost_dollars=1.0,  # Cap, but should be $0 with free model
+                description="Stage-zero Qwen smoke test with a $1 cap",
+                max_cost_dollars=1.0,
                 budgets=[50],
                 n_seeds=1,
                 test_size=self.test_size,
                 benchmarks=["hotpotqa"],
-                arms=["A", "B"],  # GEPA default + Popperian only for slim core
-                models=[free_model],  # Use free model for stage 0
+                arms=["A", "B", "M"],
+                survival_policy="majority",
+                min_survival_questions=3,
+                models=[smoke_model],
                 requires_stage_gate=True,
                 required_checks=[
                     "call_accounting_matches_provider",
@@ -332,7 +339,7 @@ class ExperimentConfig:
                     "canary_no_drift",  # Canary check required
                 ],
                 run_canary=True,
-                canary_model=free_model,
+                canary_model=smoke_model,
                 allow_canary_drift=False,  # Block on drift (error should fail the stage)
             )
         elif stage_id == 1:

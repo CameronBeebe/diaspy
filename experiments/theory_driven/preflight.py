@@ -40,12 +40,16 @@ class PreFlightGate:
         runs = multiplier * len(stage.arms) * len(stage.budgets)
         optimization = multiplier * len(stage.arms) * sum(stage.budgets)
         reflection = multiplier * ("A" in stage.arms) * sum(stage.budgets)
-        critic = multiplier * sum(arm in {"B", "C"} for arm in stage.arms) * sum(stage.budgets)
+        critic = multiplier * sum(arm in {"B", "C", "M"} for arm in stage.arms) * sum(stage.budgets)
         test_calls = runs * stage.test_size
         canary_calls = len(CanarySuite.DEFAULT_CANARIES) if stage.run_canary else 0
         return {
             "total_runs": runs,
             "optimization_call_cap": optimization,
+            "proposer_calls_per_attempt": {a: {"A": 1, "B": 2, "C": 2, "M": 4}.get(a)
+                                           for a in stage.arms},
+            "survival_policy": stage.survival_policy,
+            "min_survival_questions": stage.min_survival_questions,
             "test_calls": test_calls,
             "canary_calls": canary_calls,
             "roles": {

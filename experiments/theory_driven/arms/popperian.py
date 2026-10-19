@@ -4,12 +4,14 @@ Based on popperian_gepa_skeleton.py, adapted for real LMs.
 """
 
 import json
+from dataclasses import asdict
 from typing import Callable, List, Dict, Any, Optional
 import pydantic
 import dspy
 from dspy.clients.base_lm import BaseLM
 from collections.abc import Mapping, Sequence
 from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.arms.survival import AdmissionPolicy, Evidence, SurvivalEvaluator, get_policy
 from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
 
@@ -45,7 +47,7 @@ class PopperianProposer:
     Extension points used (per robustness audit requirements):
     - GEPA instruction_proposer: Custom proposal function (documented in GEPA API)
     - Mechanical survival check: Re-runs counterexamples with new instruction
-    - Refutation archive: Regression tests from high-severity past refutations
+    - Refutation archive: Regression tests from observed past fixes
     """
     
     def __init__(
@@ -57,9 +59,12 @@ class PopperianProposer:
         task_lm: BaseLM,
         budget_tracker: BudgetTracker | UnifiedBudget,
         max_attempts: int = 2,
-        severity_tau: float = 0.5,
+        severity_tau: float | None = None,
         archive_cap: int = 6,
         event_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
+        survival_policy: str | AdmissionPolicy = "strict",
+        min_survival_questions: int = 3,
+        eps: float = 0.0,
     ):
         """Initialize Popperian proposer.
         
@@ -71,7 +76,7 @@ class PopperianProposer:
             task_lm: LM for task execution
             budget_tracker: History-based budget stopper
             max_attempts: Maximum rewrite attempts per iteration
-            severity_tau: Minimum severity for archive inclusion
+            severity_tau: Deprecated explicit legacy citation filter (default: disabled)
             archive_cap: Maximum archive size
             event_sink: Immediate survival-admission event callback (not GEPA acceptance)
         """
@@ -82,17 +87,23 @@ class PopperianProposer:
         self.task_lm = task_lm
         self.budget_tracker = budget_tracker
         self.max_attempts = max_attempts
-        self.tau = severity_tau
-        self.archive_cap = archive_cap
+        self.policy = get_policy(survival_policy, eps)
+        self.evaluator = SurvivalEvaluator(
+            program, metric, gold_by_question, task_lm, min_survival_questions,
+            severity_tau, archive_cap, eps)
+        self.last_evidence: list[Evidence] = []
+        self.last_rationale: dict[str, Any] = {}
         self.event_sink = event_sink
         
         self.critique = dspy.Predict(Critique)
         self.rewrite = dspy.Predict(Rewrite)
         self.log: List[Dict[str, Any]] = []
         
-        # Refutation archive: counterexamples become regression tests
-        self.archive: List[str] = []
-    
+    @property
+    def archive(self) -> dict[str, float]:
+        """Compatibility view of the evaluator's scored archive."""
+        return self.evaluator.archive
+
     def survives(
         self,
         predictor_name: str,
@@ -100,66 +111,19 @@ class PopperianProposer:
         refutations: List[Refutation],
         batch: list,
         candidate: Dict[str, str],
-    ) -> tuple[bool, List[Any]]:
-        """Re-run each counterexample under the new instruction; all must now score 1.
-        
-        This is the mechanical survival check that distinguishes arm B from arm A.
-        
-        Args:
-            predictor_name: Name of the predictor to update
-            instruction: New instruction to test
-            refutations: Refutations that led to this instruction
-            batch: Current minibatch
-            candidate: Full parent candidate, including predictors not being updated
-            
-        Returns:
-            Tuple of (survived, tested_questions)
-        """
-        # Get counterexample questions
-        ids = sorted({
-            i for r in refutations
-            if r.severity >= self.tau
-            for i in r.counterexample_ids
-            if 0 <= i < len(batch)
-        })
-        
-        questions = [batch[i]["Inputs"]["question"] for i in ids]
-        
-        # Add archived regression tests
-        questions += [q for q in self.archive if q not in questions]
-        if not questions:
-            return False, questions
-        
-        # Test each question with new instruction
-        prog = self.program.deepcopy()
-        predictors = dict(prog.named_predictors())
-        for name, predictor in predictors.items():
-            signature = predictor.signature
-            assert signature is not None
-            predictor.signature = signature.with_instructions(candidate[name])
-        predictor = predictors[predictor_name]
-        signature = predictor.signature
-        assert signature is not None
-        predictor.signature = signature.with_instructions(instruction)
-        
-        tested_questions = []
-        with dspy.context(lm=self.task_lm):
-            for q in questions:
-                gold = self.gold[q]
-                pred = prog(**gold.inputs())
-                tested_questions.append(q)
-                
-                
-                if self.metric(gold, pred, None, None, None).score < 1:
-                    return False, tested_questions
-        
-        # Survived: archive this round's counterexamples
-        for q in questions[:len(ids)]:
-            if q not in self.archive:
-                self.archive = (self.archive + [q])[-self.archive_cap:]
-        
-        return True, questions
-    
+        evidence: list[Evidence] | None = None,
+    ) -> tuple[bool, List[str]]:
+        """Evaluate the entire survival set against observed parent/reference scores."""
+        if evidence is None:
+            evidence = self.evaluator.prepare(candidate, refutations, batch)
+        self.last_evidence = self.evaluator.evaluate(candidate, predictor_name, instruction, evidence)
+        admitted, self.last_rationale = self.policy(self.last_evidence)
+        if admitted:
+            self.evaluator.admit_archive(self.last_evidence)
+        questions = list(dict.fromkeys(e.question for e in self.last_evidence
+                                      if e.rewrite_score is not None))
+        return admitted, questions
+
     def __call__(
         self,
         candidate: Dict[str, str],
@@ -203,6 +167,8 @@ class PopperianProposer:
             # Rewrite attempts
             new = candidate[name]
             ok = False
+            evidence = (self.evaluator.prepare(candidate, refutations, batch)
+                        if self.max_attempts > 0 else [])
             for attempt in range(1, self.max_attempts + 1):
                 with dspy.context(lm=self.critic_lm):
                     rewrite_result = self.rewrite(
@@ -213,9 +179,14 @@ class PopperianProposer:
                 
                 
                 # Survival check
-                ok, ids = self.survives(name, new, refutations, batch, candidate)
+                ok, ids = self.survives(name, new, refutations, batch, candidate, evidence)
                 
                 record = {
+                    "policy": self.policy.name,
+                    "evidence": [asdict(e) for e in self.last_evidence],
+                    "severity_usage": "descriptive_only",
+                    "rationale": self.last_rationale,
+                    "legacy_severity_tau": self.evaluator.severity_tau,
                     "attempt": attempt,
                     "predictor": name,
                     "old_instruction": candidate[name],
@@ -261,8 +232,11 @@ class PopperianArm(BaseArm):
         use_merge: bool = False,
         seed: int = 0,
         max_attempts: int = 2,
-        severity_tau: float = 0.5,
+        severity_tau: float | None = None,
         archive_cap: int = 6,
+        survival_policy: str | AdmissionPolicy = "strict",
+        min_survival_questions: int = 3,
+        eps: float = 0.0,
         **kwargs
     ):
         """Initialize Popperian arm."""
@@ -274,6 +248,10 @@ class PopperianArm(BaseArm):
         self.max_attempts = max_attempts
         self.severity_tau = severity_tau
         self.archive_cap = archive_cap
+        self.policy = get_policy(survival_policy, eps)
+        self.survival_policy = self.policy.name
+        self.min_survival_questions = min_survival_questions
+        self.eps = eps
         self.proposer: Optional[PopperianProposer] = None
     
     def compile(
@@ -321,6 +299,9 @@ class PopperianArm(BaseArm):
             severity_tau=self.severity_tau,
             archive_cap=self.archive_cap,
             event_sink=event_sink,
+            survival_policy=self.policy,
+            min_survival_questions=self.min_survival_questions,
+            eps=self.eps,
         )
         
         # Create GEPA with custom proposer
@@ -352,6 +333,8 @@ class PopperianArm(BaseArm):
     def get_stats(self) -> Dict[str, Any]:
         """Get arm statistics including proposer log."""
         stats = super().get_stats()
+        stats["survival_policy"] = self.survival_policy
+        stats["min_survival_questions"] = self.min_survival_questions
         if self.proposer:
             stats["proposer_log"] = self.proposer.log
             stats["archive_size"] = len(self.proposer.archive)

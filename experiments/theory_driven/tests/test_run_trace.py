@@ -84,7 +84,7 @@ def test_sanitizer_covers_all_persisted_event_text(tmp_path):
 @pytest.mark.parametrize("later_error", [False, True])
 def test_proposer_persists_each_attempt_before_next_attempt(tmp_path, later_error, monkeypatch):
     trace = RunTrace(tmp_path, "experiment", "benchmark", "B", {})
-    task = DummyLM([{"answer": "no"}, {"answer": "yes"}])
+    task = DummyLM([{"answer": "no"}, {"answer": "no"}, {"answer": "yes"}])
     critic = DummyLM([
         {"refutations": proposal_record(True)["refutations"]},
         {"new_instruction": "first"}, {"new_instruction": "second"},
@@ -112,7 +112,7 @@ def test_proposer_persists_each_attempt_before_next_attempt(tmp_path, later_erro
     else:
         assert proposer(candidate, dataset, ["answer"]) == {"answer": "second"}
     steps = [event["step"] for event in read_events(tmp_path, trace)[1:]]
-    assert [step["calls_consumed"] for step in steps] == ([3] if later_error else [3, 2])
+    assert [step["calls_consumed"] for step in steps] == ([4] if later_error else [4, 2])
     assert [step["decision"]["accepted"] for step in steps] == ([False] if later_error else [False, True])
     assert all(step["conjecture"]["old_instruction"] == "parent" for step in steps)
     assert all(step["conjecture"]["module_name"] == "answer" for step in steps)
@@ -141,7 +141,7 @@ def test_survival_event_reports_only_questions_actually_tested(tmp_path):
             return result
 
     trace = RunTrace(tmp_path, "experiment", "benchmark", "B", {})
-    task = CostedDummyLM([{"answer": "no"}])
+    task = CostedDummyLM([{"answer": "no"}] * 4)
     refutations = [{"claim": "wrong", "counterexample_ids": [0, 1],
                     "severity": 1.0, "proposed_fix": "fix"}]
     critic = CostedDummyLM([{"refutations": refutations}, {"new_instruction": "new"}])
@@ -152,6 +152,7 @@ def test_survival_event_reports_only_questions_actually_tested(tmp_path):
     )
     proposer({"answer": "old"}, {"answer": [{"Inputs": {"question": q}} for q in golds]}, ["answer"])
     event = read_events(tmp_path, trace)[-1]
-    assert event["metadata"]["tested_questions"] == ["q1"]
-    assert event["step"]["test_selection"]["example_count"] == 1
-    assert event["step"]["cost_consumed"] == 0.375
+    assert event["metadata"]["tested_questions"] == ["q1", "q2"]
+    assert event["step"]["test_selection"]["example_count"] == 2
+    assert event["step"]["calls_consumed"] == 6
+    assert event["step"]["cost_consumed"] == 0.75

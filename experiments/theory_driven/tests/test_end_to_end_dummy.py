@@ -8,5 +8,7 @@ def test_cli_dry_run_never_constructs_harness(monkeypatch, capsys):
     monkeypatch.setattr(run_staged, "ExperimentHarness", forbidden)
     assert run_staged.main(["--stage", "0", "--dry-run"]) == 0
     output = capsys.readouterr().out
-    assert "$0.00" in output
+    assert '"cost_cap": 1.0' in output
+    assert '"max_cost": null' in output
+    assert "openrouter/qwen/qwen3.5-9b" in output
     assert '"task"' in output and '"reflection"' in output and '"critic"' in output
