@@ -79,8 +79,9 @@ def test_normalize_instruction_whitespace_only():
 
 def test_unchanged_parent_not_in_output():
     """When proposer returns parent unchanged, it should not appear in output dict."""
-    # This is tested via the proposer behavior - when no corroborated counterexample,
+    # This tests the proposer behavior - when no corroborated counterexample,
     # the proposer should NOT set out[name], letting GEPA skip re-scoring
+    from dspy.utils.dummies import DummyLM
     
     class FakeEvidence:
         def __init__(self):
@@ -94,14 +95,14 @@ def test_unchanged_parent_not_in_output():
         def prepare(self, candidate, refutations, batch, **kwargs):
             return []
     
-    # Mock a proposer
+    # Mock a proposer with dummy LMs
     proposer = PopperianProposer(
         program=dspy.Predict("question -> answer"),
         metric=lambda *args: type("Metric", (), {"score": 1.0})(),
         gold_by_question={},
-        critic_lm=dspy.LM("dummy", cache=False),
-        task_lm=dspy.LM("dummy", cache=False),
-        budget_tracker=UnifiedBudget(100, 1.0),
+        critic_lm=DummyLM([{"refutations": []}]),
+        task_lm=DummyLM([{"answer": "test"}]),
+        budget_tracker=UnifiedBudget(100, 1.0, DummyLM([{"answer": "test"}])),
         max_attempts=2,
     )
     proposer.evaluator = FakeEvidence()
@@ -114,7 +115,11 @@ def test_unchanged_parent_not_in_output():
     )
     
     # The key should NOT be in the result
-    assert "Q" not in result or result.get("unchanged_parent_returned") is True
+    assert "Q" not in result
+    
+    # Check the log to verify it was marked as unchanged
+    assert len(proposer.log) == 1
+    assert proposer.log[0].get("unchanged_parent_returned") is True
 
 
 def test_joint_set_deduplication_counterexample_takes_precedence():
