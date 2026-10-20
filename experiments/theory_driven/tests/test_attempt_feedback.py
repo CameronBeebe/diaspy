@@ -44,7 +44,7 @@ def test_b_no_corroborated_counterexample_uses_real_reflective_outputs(parent_sc
     batch = [{"Inputs": {"question": "q"}, "Generated Outputs": {"answer": str(parent_score)},
               "Feedback": "Improve the score"}]
     proposer, task, reflection, budget, dataset = make_b(["unused"], batch=batch, refs=refs)
-    assert proposer({"answer": "parent"}, dataset, ["answer"]) == {"answer": "parent"}
+    assert proposer({"answer": "parent"}, dataset, ["answer"]) == {}  # Returns {} when no corroboration
     assert not task.history
     assert len(reflection.history) == budget.used_calls() == 1
     assert proposer.log[-1]["rationale"]["reason"] == "no_corroborated_counterexample"
@@ -57,7 +57,7 @@ def test_b_normalized_duplicate_skips_all_task_calls(rewrites, expected_task_cal
     proposer, task, _, _, batch = make_b(rewrites, task_scores=[0.2], batch=[{
         "Inputs": {"question": "q"}, "Generated Outputs": {"answer": "0.2"}, "Feedback": "Improve"}])
     proposer.archive["q"] = 0.5
-    assert proposer({"answer": "parent"}, batch, ["answer"]) == {"answer": "parent"}
+    assert proposer({"answer": "parent"}, batch, ["answer"]) == {}  # Returns {} when normalized duplicate
     assert len(task.history) == expected_task_calls
     assert proposer.log[-1]["rationale"]["reason"] == "duplicate_rewrite"
     assert proposer.log[-1]["tested_questions"] == []
@@ -99,7 +99,7 @@ def test_m_no_counterexample_only_calls_prosecution_and_defense():
     for row in batch["answer"]:
         row["Generated Outputs"] = {"answer": "1"}
         row["Feedback"] = "Correct; no score in this feedback"
-    assert proposer({"answer": "parent"}, batch, ["answer"]) == {"answer": "parent"}
+    assert proposer({"answer": "parent"}, batch, ["answer"]) == {}  # Returns {} when no corroboration (M)
     assert not task.history
     assert len(reflection.history) == len(defender.history) == 1
     assert budget.used_calls() == 2

@@ -154,11 +154,12 @@ def test_failed_rivals_keep_parent_retry_cap_and_emit_one_round_record():
     proposer, task, reflection, defender, budget, events, batch = make_proposer(
         prosecution=(0, 0), millian=(0, 1), max_attempts=2,
     )
-    assert proposer({"answer": "Not base"}, batch, ["answer"]) == {"answer": "Not base"}
+    assert proposer({"answer": "Not base"}, batch, ["answer"]) == {}  # Returns {} when all rivals fail
     assert len(events) == 1
     assert len(events[0]["attempts"]) == 2
     assert events[0]["winner"] is None
     assert events[0]["received_view_survived"] is True
+    assert events[0]["returned_unchanged_parent"] is True
     assert not proposer.archive
     assert len(task.history) == 8  # repeated rivals on attempt 2 are not evaluated again
     assert len(reflection.history) == 5

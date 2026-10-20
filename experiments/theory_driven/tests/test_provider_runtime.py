@@ -193,8 +193,8 @@ def test_default_ten_retries_recover_with_capped_exponential_backoff(backoff, ex
     assert "ok" in lm("hello")[0]
     assert engine.calls == 11
     assert delays == expected
-    assert [row["attempt"] for row in runtime.attempts] == [1, 2, 3, 4, 5, 6]
-    assert [row["status_code"] for row in runtime.attempts] == [429] * 5 + [None]
+    assert [row["attempt"] for row in runtime.attempts] == list(range(1, 12))  # 11 attempts total
+    assert [row["status_code"] for row in runtime.attempts] == [429] * 10 + [None]
     assert not runtime.failed
 
 
