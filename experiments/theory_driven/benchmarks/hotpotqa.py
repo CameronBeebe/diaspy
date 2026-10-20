@@ -13,12 +13,23 @@ from rank_bm25 import BM25Okapi
 from experiments.theory_driven.benchmarks.base import BaseBenchmark, Splits
 
 
+class HotpotQAAnswer(dspy.Signature):
+    """Answer the question using the supplied context. In answer, return only
+    the minimal short answer (a name, date, number, or yes/no as appropriate);
+    no explanations, reasoning, citations, or restatement of the question.
+    """
+
+    context: str = dspy.InputField()
+    question: str = dspy.InputField()
+    answer: str = dspy.OutputField()
+
+
 class HotpotQAProgram(dspy.Module):
     """BM25 over supplied paragraphs only, followed by one answer predictor."""
 
     def __init__(self):
         super().__init__()
-        self.answer = dspy.Predict("context, question -> answer")
+        self.answer = dspy.Predict(HotpotQAAnswer)
 
     def forward(self, question: str, paragraphs: list[dict[str, str]]):
         tokens = [
@@ -58,16 +69,30 @@ def answer_f1(gold: str, prediction: str) -> float:
 def hotpotqa_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
     """Return answer F1 and feedback suitable for GEPA reflection."""
     score = answer_f1(gold.answer, getattr(pred, "answer", ""))
-    retrieved = set(getattr(pred, "retrieved_titles", []))
-    missing = [
-        title
-        for title in getattr(gold, "supporting_titles", [])
-        if title not in retrieved
-    ]
+    retrieved = getattr(pred, "retrieved_titles", None)
+    supporting = getattr(gold, "supporting_titles", None)
+    if retrieved is None or supporting is None:
+        retrieval_feedback = "Support coverage unknown: retrieval titles or support annotations unavailable."
+    else:
+        missing = [title for title in supporting if title not in set(retrieved)]
+        retrieval_feedback = (
+            f"Missed supporting-fact titles: {', '.join(missing)}. "
+            "Potential retrieval limitation, not proof of an instruction defect."
+            if missing else
+            "Missed supporting-fact titles: none. No annotated support titles missing."
+        )
     return dspy.Prediction(
         score=score,
         feedback=f"Gold answer: {gold.answer}. Answer F1: {score:.3f}. "
-        f"Missed supporting-fact titles: {', '.join(missing) if missing else 'none'}.",
+        "Metric: normalized answer token-F1 (harmonic mean of token precision and recall; "
+        "lowercase and remove punctuation and articles). Extra explanation tokens can "
+        "lower precision even when the short answer is included. Token overlap is not a "
+        "semantic correctness judgment, and a low score alone does not establish a "
+        "reasoning failure. Task contract: return only the minimal short answer in answer, "
+        "with no explanations or citations. "
+        f"{retrieval_feedback} Title coverage does not establish evidence sufficiency; "
+        "inspect the actual context for missing facts or ambiguity before attributing "
+        "the mismatch to the instruction.",
     )
 
 

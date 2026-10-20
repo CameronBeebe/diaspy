@@ -11,6 +11,7 @@ import dspy
 from dspy.clients.base_lm import BaseLM
 from collections.abc import Mapping, Sequence
 from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.arms.strict_json import StrictJSONAdapter
 from experiments.theory_driven.arms.survival import AdmissionPolicy, Evidence, SurvivalEvaluator, get_policy
 from experiments.theory_driven.config.budget_tracker import BudgetTracker, UnifiedBudget
 
@@ -24,8 +25,14 @@ class Refutation(pydantic.BaseModel):
 
 
 class Critique(dspy.Signature):
-    """Conjecture-and-refutation: state each way the instruction fails as a
-    falsifiable claim, cite the example ids that break it, and rate severity.
+    """Conjecture-and-refutation: a low score is an observation, not proof of a
+    reasoning failure or instruction defect. Use the task and metric guidance in the feedback.
+    Ground each falsifiable claim and proposed fix in the actual instruction, output, and available evidence;
+    cite the numbered examples and rate severity. Distinguish output-contract mismatches,
+    missing evidence, ambiguity, and demonstrated reasoning errors. Do not invent requirements
+    or attribute instructions that are not present. Describe the observed mismatch and why
+    the proposed instruction change could address it; do not assume a rewrite can supply
+    missing evidence. Return an empty list when no instruction refutation is justified.
     """
     current_instruction: str = dspy.InputField()
     examples_with_feedback: str = dspy.InputField(
@@ -72,7 +79,12 @@ class FailedAttempt(pydantic.BaseModel):
 
 
 class Rewrite(dspy.Signature):
-    """Rewrite the instruction so that it survives every refutation. Address each one."""
+    """Consider each refutation and make only evidence-grounded instruction changes.
+    Refutations are hypotheses, not established facts; a low score alone does not
+    validate their diagnosis. Preserve the task's output contract and successful
+    behavior. Do not invent requirements or missing evidence. If no supported change
+    is justified by the supplied claims and observations, retain the current instruction.
+    """
     current_instruction: str = dspy.InputField()
     refutations: List[Refutation] = dspy.InputField()
     failed_attempts: List[FailedAttempt] = dspy.InputField(
@@ -140,6 +152,7 @@ class PopperianProposer:
         self.last_rationale: dict[str, Any] = {}
         self.event_sink = event_sink
         
+        self.structured_adapter = StrictJSONAdapter()
         self.critique = dspy.Predict(Critique)
         self.rewrite = dspy.Predict(Rewrite)
         self.log: List[Dict[str, Any]] = []
@@ -201,7 +214,7 @@ class PopperianProposer:
             # Attribute the shared critique to the first rewrite attempt only.
             calls_before = self.budget_tracker.total_units
             cost_before = self.budget_tracker.total_cost
-            with dspy.context(lm=self.critic_lm):
+            with dspy.context(lm=self.critic_lm, adapter=self.structured_adapter):
                 critique_result = self.critique(
                     current_instruction=candidate[name],
                     examples_with_feedback=shown
@@ -243,7 +256,7 @@ class PopperianProposer:
             self.evaluator.last_metadata = {}
             failed_attempts: list[FailedAttempt] = []
             for attempt in range(1, self.max_attempts + 1):
-                with dspy.context(lm=self.critic_lm):
+                with dspy.context(lm=self.critic_lm, adapter=self.structured_adapter):
                     rewrite_result = self.rewrite(
                         current_instruction=candidate[name],
                         refutations=refutations,
@@ -392,6 +405,8 @@ class PopperianArm(BaseArm):
             seed=self.seed,
         )
         
+        # Each compile creates a fresh proposer/latch, shared by every role.
+        structured_adapter = self.proposer.structured_adapter
         # Create GEPA with custom proposer
         gepa = dspy.GEPA(
             metric=metric,
@@ -404,19 +419,17 @@ class PopperianArm(BaseArm):
             num_threads=1,
             gepa_kwargs={
                 **self.kwargs,
-                "stop_callbacks": [self.budget_tracker],
+                "stop_callbacks": [self.budget_tracker, structured_adapter.should_stop],
             }
         )
         
-        # Compile
-        with dspy.context(lm=task_lm if task_lm is not None else dspy.settings.lm):
-            optimized = gepa.compile(
-                program,
-                trainset=trainset,
-                valset=valset,
-            )
-        
-        return optimized
+        # GEPA may swallow proposal failures; never return a successful compile
+        # after malformed structured output, even if it raises another error.
+        try:
+            with dspy.context(lm=task_lm):
+                return gepa.compile(program, trainset=trainset, valset=valset)
+        finally:
+            structured_adapter.raise_if_failed()
     
     def get_stats(self) -> Dict[str, Any]:
         """Get arm statistics including proposer log."""

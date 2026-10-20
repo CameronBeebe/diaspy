@@ -34,7 +34,7 @@ def make_proposer(task_answer="no", max_attempts=1, program=None, refutations=No
     critic = DummyLM([
         {"refutations": refutations},
         {"new_instruction": "Accepted rewrite"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     gold = dspy.Example(question="q", answer="yes").with_inputs("question")
     budget = UnifiedBudget(100, 1.0, task, critic, roles={"task": task, "critic": critic})
     proposer = PopperianProposer(
@@ -151,7 +151,7 @@ def test_survival_runs_full_parent_candidate_and_all_example_inputs():
         {"refutations": [{"claim": "wrong answer", "counterexample_ids": [0],
                           "severity": 1.0, "proposed_fix": "answer yes"}]},
         {"new_instruction": "Proposed answer instruction"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     gold = dspy.Example(question="q", context="required paragraph", answer="yes").with_inputs("question", "context")
     proposer = PopperianProposer(program, metric, {"q": gold}, critic, task, UnifiedBudget(100, 1, task, critic))
     candidate = {"retrieve": "Parent retrieval instruction", "answer": "Parent answer instruction"}
@@ -178,7 +178,7 @@ def test_real_gepa_uses_history_stopper_and_common_reflection_keyword(arm_type, 
             {"refutations": [{"claim": "wrong", "counterexample_ids": [0], "severity": 1.0, "proposed_fix": "fix"}]},
             {"new_instruction": "Better instruction"},
             {"new_instruction": "Another instruction"},
-        ])
+        ], adapter=dspy.JSONAdapter())
     else:
         reflection = DummyLM([{"critique": "wrong"}, {"new_instruction": "Better instruction"}])
     budget = UnifiedBudget(3, 1.0, task, reflection, roles={"task": task, "reflection": reflection})

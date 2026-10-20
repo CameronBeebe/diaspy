@@ -13,7 +13,7 @@ from experiments.theory_driven.tests.test_millian import AnswerProgram, metric
 def make_b(rewrites, task_scores=(0.2, 0.2, 0.8), batch=None, refs=None):
     if refs is None:
         refs = [{"claim": "fails", "counterexample_ids": [0], "severity": 0, "proposed_fix": "fix"}]
-    reflection = DummyLM([{"refutations": refs}, *[{"new_instruction": text} for text in rewrites]])
+    reflection = DummyLM([{"refutations": refs}, *[{"new_instruction": text} for text in rewrites]], adapter=dspy.JSONAdapter())
     task = DummyLM([{"answer": str(score)} for score in task_scores])
     gold = dspy.Example(question="q", answer="1").with_inputs("question")
     budget = UnifiedBudget(100, 1, task, reflection)
@@ -127,7 +127,7 @@ def test_real_hotpot_reflective_answer_short_circuits_without_numeric_feedback(a
     from experiments.theory_driven.arms.millian import MillianProposer
     from experiments.theory_driven.benchmarks.hotpotqa import HotpotQAProgram, hotpotqa_metric
     refs = [{"claim": "incorrect", "counterexample_ids": [0], "severity": 1, "proposed_fix": "fix"}]
-    reflection = DummyLM([{"refutations": refs}, {"rebuttals": []}])
+    reflection = DummyLM([{"refutations": refs}, {"rebuttals": []}], adapter=dspy.JSONAdapter())
     task = DummyLM([])
     gold = dspy.Example(question="Which city?", paragraphs=[], answer="Paris").with_inputs("question", "paragraphs")
     budget = UnifiedBudget(100, 1, reflection, task)

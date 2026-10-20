@@ -34,7 +34,7 @@ def test_history_stopper_stops_before_large_metric_cap(arm_class, caplog):
         reflection = DummyLM([item for _ in range(50) for item in (
             {"refutations": [{"claim": "wrong", "counterexample_ids": [0], "severity": 1.0, "proposed_fix": "read"}]},
             {"new_instruction": "Read the question carefully."},
-        )])
+        )], adapter=dspy.JSONAdapter())
         extra = {"max_attempts": 1}
         iteration_bound = 5  # old + critique + rewrite + survival + new
     budget = ObservedBudget(4, 1.0, task, reflection)
