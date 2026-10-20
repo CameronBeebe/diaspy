@@ -1,196 +1,116 @@
-# Diaspy / exocortex: product-direction discussion
+# Diaspy: direction, components, and next experiment
 
-Date: 2026-10-19 (MDT)
-Participants: Cameron (user) and Hermes (assistant).
-Source: the recent conversation following the PR #5 implementation work, from the question about inspecting experiments through the request to take notes.
-Status: working discussion notes, not an approved roadmap, preregistration, or implementation-status report. The discussion is ongoing; Cameron explicitly has more to add.
+Participants: Cameron and Hermes. Started 2026-10-19; updated through the request to consolidate Diaspy, beliefs, judges, and Jev-like components.
+Status: ongoing discussion. User positions and assistant recommendations are separated. Notes and recommendations are authorized; no implementation, publication, or roadmap approval is implied.
 
-## Reading these notes
+## 1. North star — Cameron's positions
 
-User positions are distinguished from assistant interpretations and suggestions. Quotation marks below indicate excerpts from the user's actual messages. Broader industry claims and research intuitions are recorded as hypotheses, not established facts. No new experiment, product pivot, or implementation task was authorized in this discussion beyond saving these notes.
+- **Bespoke work first:** wording, memory, context, and execution conditions matter; semantic similarity does not make requests interchangeable. Do not assume a stable distribution of repeated tasks.
+- **Intent representation → intent anticipation:** an exocortex should "reliably predict and build in anticipation and in a reasonable direction consistent with the user's likely intent."
+- **Inspectability:** retain direct access to code, evidence, traces, and scientific direction; use DSPy/Python naturally. Passing tests and AI summaries are not substitutes for scrutiny.
+- **Explicit theory:** typed, theory-driven procedures may improve on unconstrained critique and rewriting. GEPA is a possible component/testbed, not necessarily the product definition.
+- **Effective decisions:** examine consequential in-harness behavior without requiring access to authentic private reasoning. Performance, interpretability, and compute efficiency remain distinct objectives.
 
-## 1. The practical need: stay able to inspect and steer AI-assisted work
+Correction preserved: the assistant initially overemphasized repeated tasks and later overemphasized realized outcomes as prerequisites for epistemic improvement.
 
-Cameron asked how experiments should be run so he can inspect code, see traces, judge the overall direction, and check that methods integrate properly and Pythonically with DSPy. Jupyter notebooks/Lab previously served this purpose, but AI makes more workflows possible without removing the need for human scrutiny.
+## 2. Components — conceptual roles, not current implementation claims
 
-User concern:
-> "i still need to check stuff, like if it makes sense the overall direction we are going in and that the methods are integrating properly pythonic with dspy"
+### Diaspy: orchestration and experimental setting
+- Integrate proposal generation, critique, revision, admission, execution, and trace inspection.
+- Existing discussion includes Popperian criticism and Millian/adversarial alternatives; these are candidate procedures, not demonstrated performance advantages.
+- Compare structured procedures with simpler DSPy programs, ordinary reflection, and compute-matched alternatives. Improvements may become code, tests, evidence, demonstrations, or instructions—not just prompt rewrites.
 
-Assistant suggestion, not a settled tooling decision:
-- Keep JupyterLab as an inspection bench, rather than the home of experimental implementation or hidden execution state.
-- Keep method code in an ordinary Python package; run reproducibly; inspect saved artifacts through notebooks or a thin trace viewer.
-- Separate scientific review (is the question useful?), methodological review (is the intended comparison implemented?), and engineering review (is it correct and idiomatic?). Passing tests does not settle the first two.
-- Inspect a complete optimization round: parent, examples and answers, critiques/defenses, instruction diffs, scores, admission rationale, subsequent GEPA decision, and resource use.
-- Avoid AI summaries becoming a barrier between Cameron and the evidence.
+### Beliefs: a small DSPy-like module — Cameron's proposal
+- Elicit the relevant propositions, purported facts, and credences for a particular execution.
+- Make those commitments available for inspection, comparison, and possibly revision before action.
+- Optional comparison with a Jev-like estimator; disagreement may provide a diagnostic of belief structure.
+- The proposed connection to latent-space belief structure is a research conjecture, not an established interpretation. Reported beliefs are not automatically verified facts or faithful neural measurements.
 
-## 2. Original research intuition: explicit, typed, theory-driven improvement
+### Jev-like / Clairic-like adapters: structured estimation
+- Jev-like component: estimate probabilities over specified propositions/options from context, alongside the main model's reported credences.
+- Clairic-like component: supply typed extracted values, source locations, and numerical estimates/distributions.
+- Keep extraction confidence, proposition probability, predicted action success, and action utility distinct. Align proposition, evidence, and time before comparing estimators.
+- External estimators are comparators, not truth oracles. Permit substitution; no vendor is a required foundation.
 
-Cameron finds it difficult to state a precise hypothesis yet, but has a substantive intuition: we can improve on asking an LLM to critique and rewrite prompts without an explicit structure for how to do that work.
+### Formal epistemic checks: constraints on commitments
+- Check supported logical relationships among beliefs and consider their consequences across admissible possible worlds.
+- Separate honest elicitation, coherence, and empirical calibration. Internal expected-loss reasoning can improve reports before any event resolves.
+- Track evidence, scope, contradictions, and revision dependencies. Synthetic worlds are hypothetical, not observations about the real user.
+- Valid types and coherent probabilities do not establish truth, complete evidence, or adequate semantic interpretation.
 
-> "we can do way better than just vanilla/naive rewrites of prompts, by being theory-driven in a more explicit and typed way"
+### Judges / judgekit: evaluation and adjudication
+- Cameron identifies judges and judgekit as part of the wider set of ideas.
+- **Proposed role:** evaluate evidence support, semantic adequacy, relevance, and task outcomes where deterministic checks are insufficient; preserve rubric, evidence, verdict, and disagreement.
+- Prefer code for logical/numerical checks and human review for ambiguous intent. Judge outputs remain fallible assessments, not ground truth.
+- Earlier detailed judgekit discussions were not recovered in the available history search. This role is an assistant recommendation, not a claim about judgekit's existing APIs or agreed architecture.
 
-> "rather than just hoping the llm doing the rewrite is in an appropriate latent space ('frame of mind') for critiquing and rewriting properly"
+### Adversarial structures: targeted challenges
+- Critics propose counterexamples, alternative interpretations, defeaters, or rival actions; defenders identify what remains supported.
+- Critique should attach to explicit claims and evidence rather than reward persuasive debate or majority agreement alone.
+- Escalate selectively when ambiguity or consequence warrants the cost; the hypothesis that this improves decisions remains to be tested.
 
-He also wants to avoid duplicating mechanisms that already exist in DSPy or related work.
+## 3. de Finetti correction — central, not a footnote
 
-Assistant interpretation:
-- A rewrite implicitly bundles diagnosis, prioritization, explanation, intervention, anticipated regressions, and a judgment about acceptance.
-- Explicit representations can make these operations addressable and testable.
-- Distinguish representation (what must be expressed), procedure (what steps occur), and enforcement (what is independently checked).
-- Types alone ensure neither truth nor sound evidence. A counterexample ID is useful when the system checks whether the cited example actually supports the claim.
-- Separate improved proposal generation from improved proposal selection. A restrictive admission rule can produce discipline without better performance.
+**Cameron's point:** "ACTUAL contact with the world is not needed in order to minimize the score by ones own lights." Expected scoring consequences can motivate honest reporting and coherent commitments before outcomes occur; realized penalties are not required.
 
-Provisional assistant hypothesis, not adopted as a final research claim:
-"Explicit evidence-linked diagnosis and revision produces more useful prompt changes per unit of compute than unconstrained reflection on the same feedback."
+**Distinctions preserved:**
+- Proper scoring: under one's own probability assessment, honest reporting minimizes expected loss when that score is the relevant objective.
+- Coherence: some inconsistent sets of reports can be improved across every admissible outcome, without learning which outcome occurs.
+- Empirical calibration: agreement of reported probabilities with observed frequencies is a different question; internal coherence does not establish it.
+- Simulated-world deliberation requires explicit constraints and, for expectation calculations, appropriate probability weights. Arbitrary generated examples are not automatically samples from the agent's beliefs.
+- Repeating one's own credences through a scoring formula is not new evidence. The research opportunity lies in eliciting distributed commitments, exposing incompatibilities, and changing decisions—not decorative arithmetic.
 
-## 3. GEPA, compute, and whether GEPA is the right center
+Assistant correction: the previous record → resolve → score proposal was incomplete. A beliefs module can do useful ex ante work; later outcome scoring is complementary, not its sole justification.
 
-Cameron questioned whether GEPA's authors considered more explicit theory or principally relied on compute. He wondered whether he was over-indexing on GEPA, whether other DSPy mechanisms were more appropriate, and whether full GEPA optimization was warranted when a harness increasingly performs repeated work in code.
+## 4. Recommended next step — assistant proposal, not adopted roadmap
 
-> "I like the 'per unit of compute' framing."
+**Build one narrow vertical slice: execution-local beliefs plus a coherence challenge, inside Diaspy.** Do not start a new general agent framework or simultaneously expand every component.
 
-He also recognized that adding adversarial debate itself adds compute and may therefore be another scaling strategy rather than an escape from the issue.
+### First slice
+- Pick a bounded decision from a bespoke work episode, with a clear point before action and inspectable supporting context.
+- Record a small set of decision-relevant propositions, credences, source references, dependencies, and the proposed action; version revisions rather than overwrite them.
+- Begin with confirmed relationships: negation, implication, mutually exclusive/exhaustive alternatives. Separate testing the numerical checker from testing whether a model identified the relationships correctly.
+- Return a concrete inconsistency or dominance witness to the model; let it revise the propositions, assumptions, credences, or action. Do not silently project numbers and call that understanding.
+- Keep authorization checks separate from confidence and expected utility.
 
-Research clarification supplied by the assistant:
-- The retrieved GEPA paper explicitly motivates sample-efficient learning from rich natural-language execution/evaluation feedback rather than only scalar rewards.
-- It identifies candidate validation as a major rollout expense and calls out "feedback engineering" as a future direction.
-- It is therefore misleading to characterize GEPA simply as naive rewriting or to attribute an unverified 'compute only' motivation to its authors.
-- This does not establish whether the authors considered or rejected Cameron's particular typed, theory-driven procedures.
+### Minimal comparison
+- Ordinary execution.
+- Belief elicitation only, to measure the effect and cost of recording.
+- Belief elicitation plus executable coherence feedback and revision.
+- Compute-matched ordinary reflection, to separate structure from extra deliberation.
 
-Sources consulted in the conversation:
-- GEPA paper, version 1: https://arxiv.org/html/2507.19457v1
-- SIMBA: https://dspy.ai/api/optimizers/SIMBA/
-- BootstrapFewShot: https://dspy.ai/api/optimizers/BootstrapFewShot/
-- Refine: https://dspy.ai/api/modules/Refine/
+Use small controlled cases with known semantics to verify mechanisms, plus a curated set of heterogeneous personal episodes to test usefulness. The former is not a proxy for the whole product; the latter is not enough for broad generalization claims.
 
-Assistant suggestions, not selected alternatives:
-- GEPA could remain a testbed rather than define the product.
-- BootstrapFewShot supplies demonstrations; SIMBA develops reflective rules or demonstrations; Refine applies bounded refinement at execution time.
-- A well-factored DSPy program with vetted examples and Python checks should be a serious baseline, even without an optimizer.
-- Compare adversarial discussion against equal-resource alternatives such as independent proposals, ordinary reflection, better demonstrations, or more informative evaluation.
-- Reusable improvements might be code, tests, retrieval knowledge, demonstrations, or instructions—not necessarily prompts.
+### What to inspect
+- Validity of the propositions/relations; inconsistency before and after feedback.
+- Whether evidence interventions and user corrections change the appropriate commitments and actions.
+- Artifact/task quality, user correction effort, unnecessary questions, missed useful actions, latency, tokens, and cost.
+- Outcome-based scores only where resolution is valid; do not confuse coherence gains with empirical calibration.
+- Preserve raw → checked → challenged → revised → executed traces in ordinary artifacts, with a notebook or thin viewer for review.
 
-## 4. Synthetic data and scarce genuine examples
+### Add other components only after this slice is informative
+- **Jev-like comparator:** run in shadow mode on aligned propositions and context, initially without seeing the main model's credences. Study where disagreement predicts errors or useful revisions.
+- **judgekit:** reuse existing capabilities after inspecting its actual interfaces; evaluate semantic judgments against code/human checks, not solely against another model.
+- **Adversarial roles:** target failures the simple checker cannot address; compare against ordinary reflection before adding full debate.
+- **GEPA/other optimization:** optimize a component only after the behavior and evaluation target are stable. Do not optimize the entire evolving product idea at once.
+- **Persistent user beliefs/anticipation:** defer until execution-local scope, correction, and revision work reliably.
 
-Cameron raised the possibility that low-volume settings require more synthetic examples to bootstrap optimization than genuine examples available.
+**Go/no-go:** proceed beyond the slice if it improves meaningful decisions or diagnoses correctable failures at acceptable cost—not merely if it emits cleaner JSON or coherent numbers. If numerical coherence improves but decisions do not, investigate relevance and decision coupling before scaling complexity.
 
-Assistant distinctions:
-- Synthetic task instances, demonstrations, counterexamples, and labels have different evidential status.
-- Theory could generate discriminating counterexamples: examples designed to distinguish competing explanations of failure.
-- Generated labels are not automatically ground truth. Prefer executable rules, simulators, trusted sources, or human checks where available.
-- Preserve provenance and validation status instead of silently promoting generated conjectures into evidence.
+## 5. Evidence and open questions
 
-These were suggestions for investigating the concern, not a decision to build a synthetic-data pipeline.
+Detailed reading notes:
+- [Proactive assistance, foundations, and synthesis](readings/proactive-and-foundations.md).
+- [Context adaptation and provenance](readings/context-and-provenance.md).
 
-## 5. Cameron's correction: bespoke requests are central, not an edge case
+Later sources discussed (source claims, not independently reproduced):
+- de Finetti/proper scoring: https://statmath.wu.ac.at/~kastner/ISBA/dawid01.pdf
+- Jev: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+- Clairic: https://blog.cloudflare.com/clairic-extraction-model/
+- ConfTuner: https://arxiv.org/abs/2508.18847v2
+- Behavioral calibration: https://arxiv.org/abs/2512.19920v3
+- ForecastBench: https://www.forecastbench.org/docs/
 
-Cameron pushed back on the assistant's repeated-task framing. A large proportion of his requests are bespoke, and he suspects this is also true of other users and important industry applications.
+Open: belief selection and elicitation timing; formal semantics and subjective world weights; relevance to actual action; comparator interpretation; handling changing intent; independent judge validation; and whether any diagnostic supports claims about internal representation beyond observable behavior.
 
-> "a large amount of my requests, and i suspect from others as well, are completely bespoke"
-
-Even when requests can be semantically matched, the actual wording, memory, surrounding context, model differences, and numerical GPU execution affect the process executing the request. Cameron's point is that semantic resemblance does not make the effective situation identical.
-
-> "a lot more of the data in industry is actually 'low volume' in several important requests"
-
-He contrasted this with constrained chatbot interactions—multiple choice or decision-tree navigation—which reduce the input space and can reduce the need for an LLM. This was an illustrative contrast, not a verified market claim about a named product.
-
-Assistant acknowledgement and distinction:
-- The earlier framing leaned too heavily on stable task distributions and reusable prompts.
-- Bespoke requests can share decision structures without sharing the same task or template.
-- Wording/context can change task meaning; sampling/numerical variability can change execution without changing intent. The system may need to handle both.
-
-Steering implication: do not assume high repetition, stable distributions, or amortization across many identical future requests as the default product setting.
-
-## 6. Intent representation → intent anticipation → agentic exocortex
-
-Cameron's central formulation:
-> "prompt iteration/optimization i think in the limit goes to 'intent representation' and then actually what is more important is 'intent anticipation'"
-
-He described the desired agentic exocortex as something that can:
-> "reliably predict and build in anticipation and in a reasonable direction consistent with the user's likely intent"
-
-This goes beyond reactive answer quality. The system should advance work in a direction consistent with the user, including before the user fully articulates the next request.
-
-Assistant interpretation, offered for further discussion:
-- The reusable thing may be a procedure for forming, testing, and updating an account of what a person wants in a particular situation—not a fixed prompt.
-- Cross-request learning may concern the user's priorities, constraints, tradeoffs, and changing circumstances.
-- An intent model should remain revisable; it should not override current user instructions.
-- Distinguish predicting relevance, preparing something useful, and having authority to act. Anticipation is not automatically authorization.
-- Reversible preparation can be useful initiative without committing the user to publication, expenditure, or a change of direction.
-
-These boundaries were introduced by the assistant; Cameron has not yet explicitly accepted a particular permission model or product architecture.
-
-## 7. Decision traces, not claims of access to internal reasoning
-
-Cameron explicitly liked the distinction between decision traces and reasoning traces.
-
-> "the model can reason what it wants, but its behavior is approximated or dominated by what is EFFECTIVE which are the DECISIONS it makes in-harness"
-
-His emphasis is on consequential behavior: what the model actually chooses and does through the harness, rather than requiring an authentic explanation of its internal cognition.
-
-> "if the model wants to lie or obscure WHY it decides to do something, but it still did the 'correct' thing, that is important to know and track"
-
-He sees this as helping:
-> "screen off applications from major debates abut model authenticity, calibration, faithfulness, etc."
-
-Faithful interpretation: the relationship between stated explanation and effective behavior still matters and should be tracked, but applications need not resolve all debates about internal reasoning before they can evaluate and govern decisions. Do not reduce this to "explanations never matter" or "correct output justifies any process."
-
-Assistant qualification:
-- Logs can establish a discrepancy between an explanation and observable behavior; they do not by themselves establish deliberate lying.
-- Separate model-generated justifications from observed actions, constraints, outcomes, and user corrections.
-- Correctness can include authority, privacy, and preserving options—not just immediate output usefulness.
-- Decision accountability can avoid requiring faithful chain-of-thought, while uncertainty about intent and consequences remains operationally relevant.
-
-## 8. Performance and inspectability: related but distinct goals
-
-Cameron recognized that this is partly an explainability/interpretability project even though he originally framed it as performance/optimization.
-
-> "yes this is a kind of explainable interpretability project on the side even though i was framing it in my head and to you as a performace/optimization project"
-
-His tentative phrase was "typed reasoning traces rather than totally free form reasoning traces"; the subsequent discussion refined the focus toward decisions and evidence.
-
-Assistant proposal:
-- Performance objective: better useful improvements or actions per unit of total compute.
-- Auditability objective: decisions a human can reconstruct, challenge, and correct.
-- Do not silently treat improvement in one as evidence of improvement in the other.
-
-A possible typed decision record, suggested by the assistant:
-- Intent hypothesis and supporting context/provenance.
-- Unresolved ambiguity.
-- Proposed action, expected benefit, and possible downside.
-- Authority to act.
-- Observable outcome.
-- User correction or acceptance.
-
-This is a candidate design, not an agreed schema. Not every action necessarily warrants every field or another model call.
-
-## 9. Product direction to preserve while the discussion continues
-
-The strongest user-originated themes so far:
-1. Human ability to inspect and steer the method must survive AI-assisted development.
-2. Explicit typed theory-driven procedures may improve on relying on the model's implicit 'frame of mind.'
-3. Bespoke, context-dependent, low-volume work is a central target setting.
-4. Intent representation is a step toward the more important capability of intent anticipation.
-5. An exocortex should reliably build ahead in a direction consistent with likely user intent.
-6. Effective in-harness decisions are a practical object of observation and evaluation; private reasoning narratives need not be the foundation.
-7. Compute efficiency matters, and debate itself must justify its resource use.
-8. GEPA is not necessarily the final organizing abstraction.
-
-Assistant synthesis offered, not a user-approved final hypothesis:
-"Can an explicit decision protocol help an agent take more useful, appropriately authorized initiative on bespoke requests, with less user steering and less wasted compute?"
-
-## 10. Open questions / not yet decided
-
-- What exactly should an intent representation contain, and how should it change over time?
-- What counts as successful anticipation versus unwanted initiative?
-- How do we evaluate usefulness on genuinely bespoke requests without forcing them into an artificial repeated-task benchmark?
-- Which observations establish a correct decision, including delayed outcomes and user correction?
-- How much typed structure helps before it becomes overhead or constrains useful behavior?
-- Which decisions should be deterministic Python, which model-mediated, and which human-approved?
-- How should synthetic counterexamples and observations be mixed without confusing their evidential status?
-- Which parts of existing DSPy/GEPA mechanisms should be reused, compared, or bypassed?
-- How should performance, total compute, user steering effort, and auditability be measured separately?
-- How should explanation/action discrepancies be recorded without assuming access to hidden motives?
-- What role should notebooks, a trace inspector, and an experiment ledger play?
-
-No final hypothesis, new benchmark, tooling choice, pivot away from GEPA, or implementation roadmap was agreed. The explicit commitment in the latest turn is to preserve faithful notes so the ongoing discussion can steer the product.
+The long original discussion remains in [the archive](archive/2026-10-19-product-direction-before-beliefs.md). This is the concise steering summary, synchronized with the local notes for PR #6.
