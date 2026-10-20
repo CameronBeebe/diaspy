@@ -22,7 +22,7 @@ class ModelConfig:
     # Reasoning control (OpenRouter's reasoning parameter)
     # For Qwen3.5: set to False to disable thinking/reasoning tokens
     enable_reasoning: bool = False
-    provider_allow_fallbacks: bool | None = None  # None = use stage default, True/False = explicit
+    provider_allow_fallbacks: Optional[bool] = None  # None = use stage default, True/False = explicit
     provider_order: List[str] = field(default_factory=list)
     
     # Alternative models
@@ -181,6 +181,9 @@ class StageConfig:
     backoff_seconds: float = 2.0
     max_delay_seconds: float = 120.0
     max_retry_wall_seconds: float = 900.0  # 15 minutes total retry time per call
+    
+    # Provider fallback configuration
+    provider_allow_fallbacks: Optional[bool] = None  # None = use model config default, True/False = override
 
 
 @dataclass
