@@ -177,21 +177,21 @@ class ScriptedEngine:
 
 
 @pytest.mark.parametrize("backoff,expected", [
-    (2.0, [2.25, 4.25, 8.25, 16.25, 32.25]),
-    (30.0, [30.25, 60.25, 120.25, 240.25, 480.25]),
-    (60.0, [60.25, 120.25, 240.25, 480.25, 960.25]),
+    (2.0, [2.25, 4.25, 8.25, 16.25, 32.25, 64.25, 120.0, 120.0, 120.0, 120.0]),  # capped at 120s from attempt 6+
+    (30.0, [30.25, 60.25, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0]),  # capped at 120s from attempt 2+
+    (60.0, [60.25, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0, 120.0]),  # capped at 120s from attempt 1+
 ])
-def test_default_five_retries_recover_with_uncapped_exponential_backoff(backoff, expected):
-    """Exponential backoff is no longer capped at 60s, only Retry-After is capped."""
+def test_default_ten_retries_recover_with_capped_exponential_backoff(backoff, expected):
+    """Exponential backoff is capped at max_delay_seconds (120s default)."""
     module = runtime_module()
     delays = []
     runtime = module.ProviderRuntime(
         backoff_seconds=backoff, sleep=delays.append, random=lambda: 0.25,
     )
-    engine = ScriptedEngine([StatusError(429) for _ in range(5)])
+    engine = ScriptedEngine([StatusError(429) for _ in range(10)])
     lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
     assert "ok" in lm("hello")[0]
-    assert engine.calls == 6
+    assert engine.calls == 11
     assert delays == expected
     assert [row["attempt"] for row in runtime.attempts] == [1, 2, 3, 4, 5, 6]
     assert [row["status_code"] for row in runtime.attempts] == [429] * 5 + [None]
@@ -256,10 +256,14 @@ def test_exhausted_rate_limit_is_latched_not_retried_by_outer_optimizer():
     for target in (lm, lm, lm.copy(), critic):
         with pytest.raises(module.ProviderFailure, match="free pool exhausted"):
             target("hello")
-    assert engine.calls == 6
+    assert engine.calls == 11  # 1 initial + 10 retries
     assert critic_engine.calls == 0
-    assert delays == [2.5, 4.5, 8.5, 16.5, 32.5]
-    assert len(runtime.attempts) == 6
+    # With max_retries=10, delays are 2.5, 4.5, 8.5, 16.5, 32.5, 64.5, 120.0, 120.0, 120.0, 120.0
+    # (capped at max_delay_seconds=120 from attempt 6 onwards)
+    assert len(delays) == 10
+    assert delays[:6] == [2.5, 4.5, 8.5, 16.5, 32.5, 64.5]
+    assert all(d == 120.0 for d in delays[6:])
+    assert len(runtime.attempts) == 11
     assert runtime.failed
 
 
@@ -385,7 +389,7 @@ def test_call_and_copy_cannot_restore_internal_retry_options():
                                      {"backoff_seconds": 60.1}, {"backoff_seconds": float("nan")},
                                      {"backoff_seconds": float("inf")}, {"text_limit": 0},
                                      {"timeout_seconds": 0}, {"timeout_seconds": -1},
-                                     {"max_retry_after_seconds": 0}, {"max_retry_after_seconds": -1}])
+                                     {"max_delay_seconds": 0}, {"max_delay_seconds": -1}])
 def test_runtime_rejects_unbounded_or_invalid_settings(options):
     module = runtime_module()
     with pytest.raises(ValueError):
@@ -424,17 +428,20 @@ def test_retry_after_is_capped_at_max_retry_after_seconds():
     assert engine.calls == 2
 
 
-def test_exponential_backoff_not_capped_only_retry_after_capped():
+def test_exponential_backoff_capped_at_max_delay_seconds_five_retries():
+    """Even with lower max_retries, exponential backoff is still capped."""
     module = runtime_module()
     delays = []
     runtime = module.ProviderRuntime(
-        backoff_seconds=30.0, sleep=delays.append, random=lambda: 0.0,
-        max_retry_after_seconds=100.0,
+        backoff_seconds=30.0, max_retries=5, max_delay_seconds=100.0,
+        sleep=delays.append, random=lambda: 0.0,
     )
     engine = ScriptedEngine([StatusError(429) for _ in range(5)])
     lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
     assert "ok" in lm("hello")[0]
-    assert delays == [30.0, 60.0, 120.0, 240.0, 480.0]
+    # Without cap: [30, 60, 120, 240, 480]
+    # With 100s cap: [30, 60, 100, 100, 100]
+    assert delays == [30.0, 60.0, 100.0, 100.0, 100.0]
     assert engine.calls == 6
 
 

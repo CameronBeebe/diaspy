@@ -47,7 +47,8 @@ def make_proposer(task_answer="no", max_attempts=1, program=None, refutations=No
 def test_rejected_rewrite_keeps_parent_not_base_instruction():
     proposer, task, critic, budget = make_proposer()
     result = proposer({"answer": "Parent not base"}, {"answer": [{"Inputs": {"question": "q"}}]}, ["answer"])
-    assert result == {"answer": "Parent not base"}
+    # With gepa 0.1.4, returning {} skips re-scoring the parent
+    assert result == {}
     assert len(critic.history) == 2
     assert len(task.history) == 2
     assert budget.used_calls() == 4
@@ -64,7 +65,7 @@ def test_no_valid_survival_questions_keeps_parent(refutations):
         task_answer="yes", refutations=refutations, severity_tau=0.5, min_survival_questions=0)
     candidate = {"answer": "Parent not base"}
     result = proposer(candidate, {"answer": [{"Inputs": {"question": "q"}}]}, ["answer"])
-    assert result == candidate
+    assert result == {}  # No corroborated counterexample, returns {} to skip re-scoring
     assert proposer.log[-1]["survived"] is False
     assert proposer.log[-1]["checked_ids"] == []
     assert proposer.archive == {}
@@ -85,7 +86,7 @@ def test_negative_survival_ids_are_ignored(counterexample_id, archive_answer):
         proposer.archive["archived"] = 1.0
     candidate = {"answer": "Parent not base"}
     result = proposer(candidate, {"answer": [{"Inputs": {"question": "q"}}]}, ["answer"])
-    assert result == candidate  # no corroborated counterexample, even if archive kept
+    assert result == {}  # no corroborated counterexample, even if archive kept
     assert proposer.log[-1]["survived"] is False
     assert proposer.log[-1]["rationale"]["reason"] == "no_corroborated_counterexample"
     assert proposer.log[-1]["checked_ids"] == []
