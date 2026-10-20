@@ -20,7 +20,7 @@ from experiments.theory_driven.canary_runner import run_stage_canary
 from experiments.theory_driven.events.run_trace import RunTrace
 from experiments.theory_driven.provider_runtime import ProviderRuntime
 from experiments.theory_driven.config.variants import parse_arm_variant
-from experiments.theory_driven.config.resume import fingerprint, completed_result
+from experiments.theory_driven.config.resume import fingerprint, completed_result, any_result_cost
 
 
 def create_lms(config: ModelConfig, seed: int) -> dict[str, Any]:
@@ -65,7 +65,8 @@ class ExperimentHarness:
     def create_arm(self, arm_name: str, budget_tracker: UnifiedBudget,
                    seed: int = 0, budget: int | None = None, *,
                    survival_policy: str | None = None,
-                   min_survival_questions: int | None = None) -> BaseArm:
+                   min_survival_questions: int | None = None,
+                   held_out_regression_samples: int = 0) -> BaseArm:
         base_name, variant_policy = parse_arm_variant(arm_name)
         survival_policy = variant_policy or survival_policy
         arm_config = next((a for a in self.config.arms + self.config.full_grid_arms
@@ -82,6 +83,8 @@ class ExperimentHarness:
                 kwargs["survival_policy"] = survival_policy
             if min_survival_questions is not None:
                 kwargs["min_survival_questions"] = min_survival_questions
+            if held_out_regression_samples > 0:
+                kwargs["held_out_regression_samples"] = held_out_regression_samples
         kwargs.update(seed=seed, max_metric_calls=budget if budget is not None else budget_tracker.max_units)
         return classes[arm_config.arm_type](name=arm_name, description=arm_config.description,
                                            budget_tracker=budget_tracker, **kwargs)
@@ -100,8 +103,9 @@ class ExperimentHarness:
                    test_size: int | None = None, max_cost: float | None = None,
                    survival_policy: str | None = None,
                    min_survival_questions: int | None = None,
+                   held_out_regression_samples: int = 0,
                    config_hash: str | None = None) -> dict[str, Any]:
-        runtime = ProviderRuntime()
+        runtime = ProviderRuntime(full_prompt_log=True)
         base_name, variant_policy = parse_arm_variant(arm_name)
         survival_policy = variant_policy or survival_policy
         arm_config = next((a for a in self.config.arms + self.config.full_grid_arms
@@ -154,7 +158,8 @@ class ExperimentHarness:
                                                    test_size=self.config.test_size if test_size is None else test_size)
             program, metric = benchmark.get_program(), benchmark.get_metric()
             arm = self.create_arm(arm_name, tracker, seed=seed, budget=budget,
-                                  survival_policy=survival_policy, min_survival_questions=min_survival_questions)
+                                  survival_policy=survival_policy, min_survival_questions=min_survival_questions,
+                                  held_out_regression_samples=held_out_regression_samples)
             with dspy.context(lm=self.lms["task"]):
                 optimized = arm.compile(program=program, metric=metric, trainset=train,
                                         valset=val, task_lm=self.lms["task"], event_sink=trace.proposal,
@@ -220,8 +225,8 @@ class ExperimentHarness:
         if not self.canary["passed"]:
             raise RuntimeError(f"Stage canary failed: {self.canary['message']}")
         cost = self.canary["total_cost"]
-        # Discover the entire stage first: later completed runs have already spent
-        # money and must reduce the cap even for the earliest missing run.
+        # Discover the entire stage first: count all runs (including aborted ones)
+        # to ensure cumulative spend is tracked correctly.
         runs = []
         for model in stage.models:
             self.config.model_config.task_model = model
@@ -234,8 +239,10 @@ class ExperimentHarness:
                             previous = completed_result(Path(resume_dir), benchmark, arm, budget, seed,
                                                         config_hash, stage.test_size) if resume_dir else None
                             runs.append((model, benchmark, arm, budget, seed, config_hash, previous))
-                            if previous is not None:
-                                cost += previous["budget_stats"]["total_cost"]
+                            if resume_dir:
+                                # Count all costs, including from aborted runs
+                                run_cost = any_result_cost(Path(resume_dir), benchmark, arm, budget, seed, config_hash)
+                                cost += run_cost
         for model, benchmark, arm, budget, seed, config_hash, previous in runs:
             self.config.model_config.task_model = model
             self.config.model_config.reflection_model = model
@@ -250,6 +257,7 @@ class ExperimentHarness:
                                      max_cost=stage.max_cost_dollars - cost,
                                      survival_policy=stage.survival_policy,
                                      min_survival_questions=stage.min_survival_questions,
+                                     held_out_regression_samples=stage.held_out_regression_samples,
                                      config_hash=config_hash)
             results.append(result)
             cost += result["budget_stats"]["total_cost"]

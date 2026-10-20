@@ -134,6 +134,9 @@ class MillianProposer:
         min_survival_questions: int = 3,
         eps: float = 0,
         defender_lm: BaseLM | None = None,
+        held_out_regression_samples: int = 0,
+        trainset: list | None = None,
+        seed: int = 0,
     ):
         self.program = program
         self.metric = metric
@@ -148,6 +151,7 @@ class MillianProposer:
         self.evaluator = SurvivalEvaluator(
             program, metric, gold_by_question, task_lm,
             min_survival_questions=min_survival_questions, archive_cap=archive_cap, eps=eps,
+            held_out_regression_samples=held_out_regression_samples, trainset=trainset, seed=seed,
         )
         self.critique = dspy.Predict(Critique)
         self.defense = dspy.Predict(Defense)
@@ -204,7 +208,7 @@ class MillianProposer:
         for name in components_to_update:
             if name not in candidate or name not in reflective_dataset:
                 continue
-            out[name] = candidate[name]
+            # Don't set out[name] initially - only set it if we find a passing rewrite
             if self.max_attempts <= 0:
                 continue
             calls: dict[str, int] = {}
@@ -232,10 +236,12 @@ class MillianProposer:
                     prosecution=skipped, millian=skipped, attempts=[], winner=None,
                     received_view_survived=True, rationale=reason, role_calls=calls, role_costs=costs,
                     calls_consumed=0, cost_consumed=0, survived=False, new_instruction=candidate[name],
+                    unchanged_parent_returned=True,
                 ).model_dump(mode="json")
                 self.log.append(record)
                 if self.event_sink is not None:
                     self.event_sink(record)
+                # Don't set out[name] - let GEPA keep parent without re-scoring
                 continue
             evidence: list[Evidence] = []
             prepared = False
@@ -326,7 +332,8 @@ class MillianArm(BaseArm):
         use_merge: bool = False, seed: int = 0, max_attempts: int = 2,
         severity_tau: float | None = None, archive_cap: int = 6,
         survival_policy: str | AdmissionPolicy = "strict", min_survival_questions: int = 3,
-        eps: float = 0, defender_lm: BaseLM | None = None, **kwargs,
+        eps: float = 0, defender_lm: BaseLM | None = None, held_out_regression_samples: int = 0,
+        **kwargs,
     ):
         super().__init__(name, description, budget_tracker, **kwargs)
         self.max_metric_calls = max_metric_calls
@@ -341,6 +348,7 @@ class MillianArm(BaseArm):
         self.min_survival_questions = min_survival_questions
         self.eps = eps
         self.defender_lm = defender_lm
+        self.held_out_regression_samples = held_out_regression_samples
         self.proposer: MillianProposer | None = None
 
     def compile(
@@ -359,6 +367,7 @@ class MillianArm(BaseArm):
             severity_tau=self.severity_tau, archive_cap=self.archive_cap,
             survival_policy=self.policy, min_survival_questions=self.min_survival_questions,
             eps=self.eps, defender_lm=defender_lm, event_sink=event_sink,
+            held_out_regression_samples=self.held_out_regression_samples, trainset=trainset, seed=self.seed,
         )
         gepa = dspy.GEPA(
             metric=metric, instruction_proposer=self.proposer, max_metric_calls=self.max_metric_calls,

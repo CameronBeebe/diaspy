@@ -11,6 +11,9 @@ from experiments.theory_driven.config import ExperimentConfig, StageConfig
 from experiments.theory_driven.config.variants import parse_arm_variant
 
 
+_CODE_VERSION = "pr6-stage0-reliability"
+
+
 def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
                 variant: str, budget: int, seed: int) -> str:
     base, policy = parse_arm_variant(variant)
@@ -27,7 +30,8 @@ def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
             return {"lm_model": value.model, "kwargs": safe(value.kwargs)}
         raise ValueError("Resume requires serializable arm configuration")
     benchmark_config = next((b for b in config.benchmarks if b.name == benchmark), None)
-    payload = {"version": 1, "dspy": metadata.version("dspy"), "gepa": metadata.version("gepa"),
+    payload = {"version": 2, "code_version": _CODE_VERSION,
+               "dspy": metadata.version("dspy"), "gepa": metadata.version("gepa"),
                "model": safe(asdict(config.model_config)), "benchmark": benchmark,
                "benchmark_options": safe(asdict(benchmark_config)) if benchmark_config else {},
                "train_size": config.train_size, "val_size": config.val_size, "test_size": stage.test_size,
@@ -61,6 +65,26 @@ def completed_result(directory: Path, benchmark: str, variant: str, budget: int,
                 and _finite_number(cost) and cost >= 0):
             return {**row, "resumed_from": str(path.resolve())}
     return None
+
+
+def any_result_cost(directory: Path, benchmark: str, variant: str, budget: int,
+                    seed: int, config_hash: str) -> float:
+    """Return the cost from any run (success, error, or aborted) that matches the config."""
+    for path in sorted(directory.glob("*.json"), reverse=True):
+        try:
+            row = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        if (row.get("benchmark"), row.get("arm"), row.get("budget"), row.get("seed"), row.get("config_hash")) != (
+                benchmark, variant, budget, seed, config_hash):
+            continue
+        stats = row.get("budget_stats")
+        cost = stats.get("total_cost") if isinstance(stats, dict) else None
+        if _finite_number(cost) and cost >= 0:
+            return cost
+    return 0.0
 
 
 def _finite_number(value: Any) -> TypeGuard[int | float]:

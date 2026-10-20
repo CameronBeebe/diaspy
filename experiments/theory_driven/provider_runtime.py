@@ -111,27 +111,36 @@ def serving_provider(response) -> str | None:
 class ProviderRuntime:
     """One shared latch across task/reflection/critic, including LM copies.
 
-    Only 429s retry: five retries by default, with 2/4/8/16/32 seconds plus
-    uniform [0, 1) second jitter, capped at 60 seconds. Retry-After is a
-    minimum and may exceed that cap. Inject sleep, random and a UNIX clock
-    for deterministic offline tests; no internal SDK retries are permitted.
+    Only 429s retry: with 2/4/8/16/32... second exponential backoff plus
+    uniform [0, 1) second jitter. Per-call timeouts prevent indefinite hangs.
+    Retry-After is a minimum, capped at max_retry_after_seconds. Inject sleep,
+    random and a UNIX clock for deterministic offline tests; no internal SDK
+    retries are permitted.
     """
 
     def __init__(self, *, secrets=(), text_limit: int = 1000,
                  max_retries: int = 5, backoff_seconds: float = 2.0,
-                 sleep=time.sleep, random=random, clock=time.time):
-        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 0 <= max_retries <= 5:
-            raise ValueError("max_retries must be an integer between 0 and 5")
+                 timeout_seconds: float = 120.0, max_retry_after_seconds: float = 300.0,
+                 sleep=time.sleep, random=random, clock=time.time, full_prompt_log: bool = False):
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
         if not 0 <= backoff_seconds <= 60:
             raise ValueError("backoff_seconds must be between 0 and 60")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_retry_after_seconds <= 0:
+            raise ValueError("max_retry_after_seconds must be positive")
         if text_limit < 1:
             raise ValueError("text_limit must be positive")
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
+        self.timeout_seconds = timeout_seconds
+        self.max_retry_after_seconds = max_retry_after_seconds
         self._sleep = sleep
         self._random = random
         self._clock = clock
         self.text_limit = text_limit
+        self.full_prompt_log = full_prompt_log
         self._secrets = set(filter(None, secrets))
         self._secrets.update(value for key, value in os.environ.items()
                              if value and any(word in key.upper()
@@ -156,6 +165,7 @@ class ProviderRuntime:
         lm.num_retries = 0
         for key in ("num_retries", "max_retries", "retry_strategy"):
             lm.kwargs.pop(key, None)
+        lm.kwargs["timeout"] = self.timeout_seconds
         return GuardedLM(lm, self, role)
 
     def sanitize(self, value, *, truncate: bool = True) -> str:
@@ -190,10 +200,15 @@ class ProviderRuntime:
             self._learn_secrets(kwargs)
             kwargs = {key: value for key, value in kwargs.items()
                       if key not in ("num_retries", "max_retries", "retry_strategy")}
+            if "timeout" not in kwargs:
+                kwargs["timeout"] = self.timeout_seconds
+            full_prompt = self.sanitize(messages if messages is not None else prompt, truncate=False)
             trace = {"role": self.sanitize(role), "model": self.sanitize(lm.model),
                      "prompt": self.sanitize(messages if messages is not None else prompt),
                      "response": "", "usage": {}, "cost": None,
                      "status_code": None, "error": None}
+            if self.full_prompt_log:
+                trace["full_prompt"] = full_prompt
             history_size = len(lm.history)
             for attempt in range(self.max_retries + 1):
                 trace = {**trace, "attempt": attempt + 1}
@@ -206,9 +221,10 @@ class ProviderRuntime:
                     trace.update(status_code=status, error=self.sanitize(error))
                     self.attempts.append(trace)
                     if status == 429 and attempt < self.max_retries:
-                        delay = min(self.backoff_seconds * 2 ** attempt + self._random(), 60.0)
-                        # Cap our backoff, not the server's minimum wait.
+                        delay = self.backoff_seconds * 2 ** attempt + self._random()
                         retry_after = retry_after_seconds(error, self._clock())
+                        if retry_after is not None:
+                            retry_after = min(retry_after, self.max_retry_after_seconds)
                         self._sleep(max(delay, retry_after or 0.0))
                         continue
                     if status in (400, 401, 404, 429):

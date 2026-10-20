@@ -174,6 +174,7 @@ class StageConfig:
     allow_canary_drift: bool = False  # If False, stage blocks on drift detection
     survival_policy: str = "strict"
     min_survival_questions: int = 3
+    held_out_regression_samples: int = 0  # Number of held-out trainset questions for regression checks
 
 
 @dataclass
@@ -334,6 +335,7 @@ class ExperimentConfig:
                 arms=["A", "B@half_no_regress", "M@half_no_regress", "B@majority"],
                 survival_policy="majority",
                 min_survival_questions=3,
+                held_out_regression_samples=2,
                 models=[smoke_model],
                 requires_stage_gate=True,
                 required_checks=[
