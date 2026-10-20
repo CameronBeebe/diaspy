@@ -36,8 +36,8 @@ def make_proposer(parent=(0, 0, 1, 1), prosecution=(1, 0), millian=(0.6, 1),
     defense = {"rebuttals": rebuttals}
     rewrites = [{"new_instruction": prosecution_text},
                 {"new_instruction": millian_text, "rejected_refutations": "None; preserve q2"}]
-    reflection = DummyLM(([critique, defense] if shared else [critique]) + rewrites * max_attempts)
-    defender = reflection if shared else DummyLM([defense])
+    reflection = DummyLM(([critique, defense] if shared else [critique]) + rewrites * max_attempts, adapter=dspy.JSONAdapter())
+    defender = reflection if shared else DummyLM([defense], adapter=dspy.JSONAdapter())
     task = DummyLM([{"answer": str(score)} for score in (*parent, *((*prosecution, *millian) * max_attempts))])
     gold = {f"q{i}": dspy.Example(question=f"q{i}", answer="1").with_inputs("question")
             for i in range(len(parent))}
@@ -93,7 +93,7 @@ def test_real_gepa_compile_and_event_sink(caplog):
         {"rebuttals": [{"refutation_index": 0, "stance": "concede", "argument": "wrong", "protected_ids": []}]},
         {"new_instruction": "Prosecution"},
         {"new_instruction": "Millian", "rejected_refutations": "none"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     budget = UnifiedBudget(3, 1, task, reflection)
     events = []
     arm = MillianArm("M", "offline", budget, max_metric_calls=50, max_attempts=1,
@@ -221,7 +221,7 @@ def test_full_parent_and_all_inputs_are_used_in_both_rival_rollouts():
         {"rebuttals": []},
         {"new_instruction": "P"},
         {"new_instruction": "M", "rejected_refutations": "none"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     budget = UnifiedBudget(100, 1, task, reflection)
     example = dspy.Example(question="q", context="required context", answer="1").with_inputs("question", "context")
     program = ContextProgram()
@@ -275,8 +275,8 @@ def test_role_costs_include_distinct_defender_without_counting_existing_calls():
         {"rebuttals": []},
         {"rebuttals": [{"refutation_index": 0, "stance": "contest", "argument": "protect",
                         "protected_ids": [1, 2]}]},
-    ])
-    with dspy.context(lm=defender):
+    ], adapter=dspy.JSONAdapter())
+    with dspy.context(lm=defender, adapter=dspy.JSONAdapter()):
         proposer.defense(current_instruction="Before round", refutations=[], examples_with_feedback="")
     proposer.defender_lm = defender
     budget.lms.append(defender)

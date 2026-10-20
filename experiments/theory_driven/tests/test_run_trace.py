@@ -88,7 +88,7 @@ def test_proposer_persists_each_attempt_before_next_attempt(tmp_path, later_erro
     critic = DummyLM([
         {"refutations": proposal_record(True)["refutations"]},
         {"new_instruction": "first"}, {"new_instruction": "second"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     gold = dspy.Example(question="q", answer="yes").with_inputs("question")
     budget = UnifiedBudget(100, 1.0, task, critic)
     proposer = PopperianProposer(
@@ -124,7 +124,7 @@ def test_arm_compile_forwards_proposal_sink(tmp_path):
     critic = DummyLM([
         {"refutations": proposal_record(True)["refutations"]},
         {"new_instruction": "first"}, {"new_instruction": "second"},
-    ])
+    ], adapter=dspy.JSONAdapter())
     budget = UnifiedBudget(3, 1.0, task, critic)
     arm = PopperianArm("B", "offline", budget, max_metric_calls=50, reflection_minibatch_size=1)
     gold = dspy.Example(question="q", answer="yes").with_inputs("question")
@@ -144,7 +144,7 @@ def test_survival_event_reports_only_questions_actually_tested(tmp_path):
     task = CostedDummyLM([{"answer": "no"}] * 4)
     refutations = [{"claim": "wrong", "counterexample_ids": [0, 1],
                     "severity": 1.0, "proposed_fix": "fix"}]
-    critic = CostedDummyLM([{"refutations": refutations}, {"new_instruction": "new"}])
+    critic = CostedDummyLM([{"refutations": refutations}, {"new_instruction": "new"}], adapter=dspy.JSONAdapter())
     golds = {q: dspy.Example(question=q, answer="yes").with_inputs("question") for q in ("q1", "q2")}
     proposer = PopperianProposer(
         AnswerProgram(), metric, golds, critic, task,

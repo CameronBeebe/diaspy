@@ -15,6 +15,7 @@ from dspy.clients.base_lm import BaseLM
 from pydantic import BaseModel, Field
 
 from experiments.theory_driven.arms.base import BaseArm
+from experiments.theory_driven.arms.strict_json import StrictJSONAdapter
 from experiments.theory_driven.arms.popperian import (
     Critique, FailedAttempt, Refutation, Rewrite, normalize_instruction,
 )
@@ -32,9 +33,14 @@ class Rebuttal(BaseModel):
 
 
 class Defense(dspy.Signature):
-    """Give the strongest defense of the current instruction against each
-    refutation. Concede genuine failures; contest mistaken objections. Cite
-    numbered examples the parent handles that the proposed fix might endanger.
+    """Give the strongest evidence-grounded defense against each refutation.
+    Refutations are hypotheses, not established facts. Use the task and metric guidance
+    in the feedback: a low score alone does not establish a reasoning failure.
+    Check the actual instruction, output, and available evidence before conceding;
+    distinguish output-contract mismatches, missing evidence, and ambiguity from
+    demonstrated reasoning errors. Preserve the task's output contract. Do not invent
+    requirements or missing evidence. Cite numbered examples the proposed fix might
+    endanger. Return an empty list if there are no refutations to address.
     """
 
     current_instruction: str = dspy.InputField()
@@ -45,8 +51,11 @@ class Defense(dspy.Signature):
 
 class DialecticalRewrite(dspy.Signature):
     """Rewrite after considering both objections and their strongest defenses.
-    Fix conceded refutations while preserving contested and protected cases.
-    State which refutations you reject and why; do not merely follow the defender.
+    Refutations are hypotheses, not established facts, and concessions are not proof.
+    Make only changes supported by the supplied claims and observations; preserve the
+    task's output contract and successful behavior. Do not invent requirements or
+    missing evidence. State which refutations you reject and why; do not merely follow
+    the defender. Retain the current instruction if no supported change is justified.
     """
 
     current_instruction: str = dspy.InputField()
@@ -154,6 +163,7 @@ class MillianProposer:
             min_survival_questions=min_survival_questions, archive_cap=archive_cap, eps=eps,
             held_out_regression_samples=held_out_regression_samples, trainset=trainset, seed=seed,
         )
+        self.structured_adapter = StrictJSONAdapter()
         self.critique = dspy.Predict(Critique)
         self.defense = dspy.Predict(Defense)
         self.rewrite = dspy.Predict(Rewrite)
@@ -217,11 +227,13 @@ class MillianProposer:
             costs: dict[str, float] = {}
             batch = list(reflective_dataset[name])
             shown = "\n".join(f"[{i}] {json.dumps(row, default=str)}" for i, row in enumerate(batch))
-            with self._account("prosecutor", calls, costs), dspy.context(lm=self.critic_lm):
+            with self._account("prosecutor", calls, costs), dspy.context(
+                lm=self.critic_lm, adapter=self.structured_adapter,
+            ):
                 refutations = self.critique(
                     current_instruction=candidate[name], examples_with_feedback=shown,
                 ).refutations
-            with self._account("defender", calls, costs), dspy.context(lm=self.defender_lm):
+            with self._account("defender", calls, costs), dspy.context(lm=self.defender_lm, adapter=self.structured_adapter):
                 rebuttals = self.defense(
                     current_instruction=candidate[name], refutations=refutations, examples_with_feedback=shown,
                 ).rebuttals
@@ -253,10 +265,10 @@ class MillianProposer:
             seen = {normalize_instruction(candidate[name])}
             winner: Literal["prosecution", "millian"] | None = None
             for attempt in range(1, self.max_attempts + 1):
-                with self._account("prosecution_rewrite", calls, costs), dspy.context(lm=self.critic_lm):
+                with self._account("prosecution_rewrite", calls, costs), dspy.context(lm=self.critic_lm, adapter=self.structured_adapter):
                     prosecution = self.rewrite(current_instruction=candidate[name], refutations=refutations,
                                                failed_attempts=failed_attempts)
-                with self._account("millian_rewrite", calls, costs), dspy.context(lm=self.critic_lm):
+                with self._account("millian_rewrite", calls, costs), dspy.context(lm=self.critic_lm, adapter=self.structured_adapter):
                     millian = self.dialectical_rewrite(
                         current_instruction=candidate[name], refutations=refutations, rebuttals=rebuttals,
                         failed_attempts=failed_attempts,
@@ -374,14 +386,20 @@ class MillianArm(BaseArm):
             eps=self.eps, defender_lm=defender_lm, event_sink=event_sink,
             held_out_regression_samples=self.held_out_regression_samples, trainset=trainset, seed=self.seed,
         )
+        structured_adapter = self.proposer.structured_adapter
         gepa = dspy.GEPA(
             metric=metric, instruction_proposer=self.proposer, max_metric_calls=self.max_metric_calls,
             reflection_minibatch_size=self.reflection_minibatch_size, use_merge=self.use_merge,
             seed=self.seed, track_stats=True, num_threads=1,
-            gepa_kwargs={**self.kwargs, "stop_callbacks": [self.budget_tracker]},
+            gepa_kwargs={**self.kwargs, "stop_callbacks": [self.budget_tracker, structured_adapter.should_stop]},
         )
-        with dspy.context(lm=task_lm):
-            return gepa.compile(program, trainset=trainset, valset=valset)
+        try:
+            with dspy.context(lm=task_lm):
+                return gepa.compile(program, trainset=trainset, valset=valset)
+        finally:
+            # GEPA retries/suppresses proposer errors; the first parse failure
+            # remains fatal even when its internal compile appears successful.
+            structured_adapter.raise_if_failed()
 
     def get_stats(self) -> dict[str, Any]:
         stats = super().get_stats()

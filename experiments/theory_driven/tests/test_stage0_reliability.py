@@ -88,7 +88,7 @@ def test_unchanged_parent_logged_explicitly():
         program=dspy.Predict("question -> answer"),
         metric=lambda *args: type("Metric", (), {"score": 1.0})(),
         gold_by_question={},
-        critic_lm=DummyLM([{"refutations": []}]),
+        critic_lm=DummyLM([{"refutations": []}], adapter=dspy.JSONAdapter()),
         task_lm=DummyLM([{"answer": "test"}]),
         budget_tracker=UnifiedBudget(100, 1.0, DummyLM([{"answer": "test"}])),
         max_attempts=2,

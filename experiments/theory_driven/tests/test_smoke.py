@@ -40,7 +40,7 @@ def scripted_lms(millian=False):
             {"new_instruction": "Use evidence while preserving correct answers.",
              "rejected_refutations": "None; objection conceded."},
         ]
-    critic = DummyLM(round_answers * 100)
+    critic = DummyLM(round_answers * 100, adapter=dspy.JSONAdapter())
     return {"task": task, "reflection": reflection, "critic": critic}
 
 
