@@ -104,9 +104,11 @@ class ModelConfig:
         # OpenRouter provider pinning
         if "openrouter/" in model and pin_provider:
             provider_config: Dict[str, Any] = {
-                "allow_fallbacks": self.provider_allow_fallbacks,  # Same-model providers only
                 "require_parameters": True,  # Require our params to be respected
             }
+            # Only include allow_fallbacks if explicitly set (not None)
+            if self.provider_allow_fallbacks is not None:
+                provider_config["allow_fallbacks"] = self.provider_allow_fallbacks
             
             if provider_name:
                 # Pin to specific provider
