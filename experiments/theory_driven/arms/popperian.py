@@ -281,6 +281,7 @@ class PopperianProposer:
                     "new_instruction": new,
                     "calls_consumed": self.budget_tracker.total_units - calls_before,
                     "cost_consumed": self.budget_tracker.total_cost - cost_before,
+                    "returned_unchanged_parent": not ok,  # True when failed to find surviving rewrite
                 }
                 self.log.append(record)
                 if self.event_sink is not None:
