@@ -165,7 +165,9 @@ class ProviderRuntime:
         lm.num_retries = 0
         for key in ("num_retries", "max_retries", "retry_strategy"):
             lm.kwargs.pop(key, None)
-        lm.kwargs["timeout"] = self.timeout_seconds
+        # Only set timeout for real HTTP providers, not custom engines
+        if isinstance(getattr(lm, "_engine_spec", None), str):
+            lm.kwargs["timeout"] = self.timeout_seconds
         return GuardedLM(lm, self, role)
 
     def sanitize(self, value, *, truncate: bool = True) -> str:
@@ -200,7 +202,8 @@ class ProviderRuntime:
             self._learn_secrets(kwargs)
             kwargs = {key: value for key, value in kwargs.items()
                       if key not in ("num_retries", "max_retries", "retry_strategy")}
-            if "timeout" not in kwargs:
+            # Only set timeout for real HTTP providers, not custom engines
+            if "timeout" not in kwargs and isinstance(getattr(lm, "_engine_spec", None), str):
                 kwargs["timeout"] = self.timeout_seconds
             full_prompt = self.sanitize(messages if messages is not None else prompt, truncate=False)
             trace = {"role": self.sanitize(role), "model": self.sanitize(lm.model),

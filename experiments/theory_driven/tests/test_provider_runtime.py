@@ -379,11 +379,86 @@ def test_call_and_copy_cannot_restore_internal_retry_options():
     assert "max_retries" not in cloned.kwargs
 
 
-@pytest.mark.parametrize("options", [{"max_retries": -1}, {"max_retries": 100},
-                                     {"max_retries": True}, {"backoff_seconds": -1},
+@pytest.mark.parametrize("options", [{"max_retries": -1}, {"max_retries": True},
+                                     {"backoff_seconds": -1},
                                      {"backoff_seconds": 60.1}, {"backoff_seconds": float("nan")},
-                                     {"backoff_seconds": float("inf")}, {"text_limit": 0}])
+                                     {"backoff_seconds": float("inf")}, {"text_limit": 0},
+                                     {"timeout_seconds": 0}, {"timeout_seconds": -1},
+                                     {"max_retry_after_seconds": 0}, {"max_retry_after_seconds": -1}])
 def test_runtime_rejects_unbounded_or_invalid_settings(options):
     module = runtime_module()
     with pytest.raises(ValueError):
         module.ProviderRuntime(**options)
+
+
+def test_timeout_is_injected_for_real_providers():
+    """Timeout should be injected only for real HTTP providers, not custom engines."""
+    module = runtime_module()
+    runtime = module.ProviderRuntime(timeout_seconds=90.0)
+    
+    # Real provider (string engine) should get timeout
+    lm = runtime.wrap(dspy.LM("openai/gpt-4o-mini", cache=False), "task")
+    assert lm.kwargs["timeout"] == 90.0
+    
+    # Custom engine should NOT get timeout
+    lm_custom = runtime.wrap(dspy.LM("openai/offline", engine=ScriptedEngine([]), cache=False), "task")
+    assert "timeout" not in lm_custom.kwargs
+
+
+def test_retry_after_is_capped_at_max_retry_after_seconds():
+    from types import SimpleNamespace
+
+    module = runtime_module()
+    delays = []
+    runtime = module.ProviderRuntime(
+        sleep=delays.append, random=lambda: 0.0, clock=lambda: 1000.0,
+        max_retry_after_seconds=60.0,
+    )
+    error = StatusError(429)
+    error.response = SimpleNamespace(headers={"Retry-After": "3600"})
+    engine = ScriptedEngine([error])
+    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
+    assert "ok" in lm("hello")[0]
+    assert delays == [60.0]
+    assert engine.calls == 2
+
+
+def test_exponential_backoff_not_capped_only_retry_after_capped():
+    module = runtime_module()
+    delays = []
+    runtime = module.ProviderRuntime(
+        backoff_seconds=30.0, sleep=delays.append, random=lambda: 0.0,
+        max_retry_after_seconds=100.0,
+    )
+    engine = ScriptedEngine([StatusError(429) for _ in range(5)])
+    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
+    assert "ok" in lm("hello")[0]
+    assert delays == [30.0, 60.0, 120.0, 240.0, 480.0]
+    assert engine.calls == 6
+
+
+def test_full_prompt_log_includes_unsanitized_full_prompt():
+    from dspy.utils.dummies import DummyLM
+
+    module = runtime_module()
+    runtime = module.ProviderRuntime(text_limit=20, full_prompt_log=True)
+    raw = DummyLM([{"answer": "response"}])
+    lm = runtime.wrap(raw, "task")
+    long_prompt = "x" * 1000
+    lm(long_prompt)
+    assert len(runtime.attempts[-1]["prompt"]) == 20
+    assert len(runtime.attempts[-1]["full_prompt"]) == 1000
+    assert runtime.attempts[-1]["full_prompt"] == long_prompt
+
+
+def test_full_prompt_log_false_does_not_include_full_prompt():
+    from dspy.utils.dummies import DummyLM
+
+    module = runtime_module()
+    runtime = module.ProviderRuntime(text_limit=20, full_prompt_log=False)
+    raw = DummyLM([{"answer": "response"}])
+    lm = runtime.wrap(raw, "task")
+    long_prompt = "x" * 1000
+    lm(long_prompt)
+    assert len(runtime.attempts[-1]["prompt"]) == 20
+    assert "full_prompt" not in runtime.attempts[-1]
