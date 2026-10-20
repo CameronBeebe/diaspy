@@ -95,15 +95,15 @@ def test_unchanged_parent_logged_explicitly():
     )
     proposer.evaluator = FakeEvidence()  # type: ignore[assignment]
     
-    # When corroborate returns False, the output should include the parent
+    # When corroborate returns False, the output should be {}
     result = proposer(
         candidate={"Q": "parent instruction"},
         reflective_dataset={"Q": [{"Inputs": {"question": "test"}}]},
         components_to_update=["Q"]
     )
     
-    # The parent should be returned
-    assert result == {"Q": "parent instruction"}
+    # Should return {} to skip GEPA re-scoring
+    assert result == {}
     
     # Check the log to verify it was marked as unchanged
     assert len(proposer.log) == 1

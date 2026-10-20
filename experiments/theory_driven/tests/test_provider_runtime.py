@@ -386,7 +386,7 @@ def test_call_and_copy_cannot_restore_internal_retry_options():
 
 @pytest.mark.parametrize("options", [{"max_retries": -1}, {"max_retries": True},
                                      {"backoff_seconds": -1},
-                                     {"backoff_seconds": 60.1}, {"backoff_seconds": float("nan")},
+                                     {"backoff_seconds": 3601}, {"backoff_seconds": float("nan")},
                                      {"backoff_seconds": float("inf")}, {"text_limit": 0},
                                      {"timeout_seconds": 0}, {"timeout_seconds": -1},
                                      {"max_delay_seconds": 0}, {"max_delay_seconds": -1}])
@@ -410,22 +410,8 @@ def test_timeout_is_injected_for_real_providers():
     assert "timeout" not in lm_custom.kwargs
 
 
-def test_retry_after_is_capped_at_max_retry_after_seconds():
-    from types import SimpleNamespace
-
-    module = runtime_module()
-    delays = []
-    runtime = module.ProviderRuntime(
-        sleep=delays.append, random=lambda: 0.0, clock=lambda: 1000.0,
-        max_retry_after_seconds=60.0,
-    )
-    error = StatusError(429)
-    error.response = SimpleNamespace(headers={"Retry-After": "3600"})
-    engine = ScriptedEngine([error])
-    lm = runtime.wrap(dspy.LM("openai/offline", engine=engine, cache=False), "task")
-    assert "ok" in lm("hello")[0]
-    assert delays == [60.0]
-    assert engine.calls == 2
+# This test has been replaced by test_retry_after_is_capped_at_max_delay_seconds
+# (already defined earlier in the file)
 
 
 def test_exponential_backoff_capped_at_max_delay_seconds_five_retries():
