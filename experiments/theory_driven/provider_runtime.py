@@ -145,16 +145,20 @@ class ProviderRuntime:
     see TRANSIENT_ERROR_NAMES) retry with exponential backoff under one shared
     policy; 400/401/404 fail fast, and exhausted retries latch. Each delay is capped at
     max_delay_seconds, and the total retry wall time is capped at
-    max_retry_wall_seconds. Retry-After is a minimum, also capped at
-    max_delay_seconds. Inject sleep, random and a UNIX clock for deterministic
-    offline tests; no internal SDK retries are permitted.
+    max_retry_wall_seconds, including attempts and waits. HTTP attempt timeouts
+    are bounded by the remaining budget; backends ignoring timeouts cannot be
+    interrupted here, but their late results are rejected. Retry-After is a
+    minimum, also capped at max_delay_seconds. Elapsed time uses a monotonic
+    clock; HTTP dates use UNIX wall time. Inject sleep, random and a single
+    UNIX clock for backward-compatible deterministic offline tests (the injected
+    clock then drives both clocks). No internal SDK retries are permitted.
     """
 
     def __init__(self, *, secrets=(), text_limit: int = 1000,
                  max_retries: int = 10, backoff_seconds: float = 2.0,
                  timeout_seconds: float = 120.0, max_delay_seconds: float = 120.0,
                  max_retry_wall_seconds: float = 900.0,
-                 sleep=time.sleep, random=random, clock=time.time, full_prompt_log: bool = False):
+                 sleep=time.sleep, random=random, clock=None, full_prompt_log: bool = False):
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
             raise ValueError("max_retries must be a non-negative integer")
         if not 0 <= backoff_seconds <= 3600:
@@ -174,7 +178,9 @@ class ProviderRuntime:
         self.max_retry_wall_seconds = max_retry_wall_seconds
         self._sleep = sleep
         self._random = random
-        self._clock = clock
+        self._clock = time.time if clock is None else clock
+        # Preserve legacy single-clock injection for deterministic offline tests.
+        self._elapsed_clock = time.monotonic if clock is None else clock
         self.text_limit = text_limit
         self.full_prompt_log = full_prompt_log
         self._secrets = set(filter(None, secrets))
@@ -203,7 +209,8 @@ class ProviderRuntime:
             lm.kwargs.pop(key, None)
         # Only set timeout for real HTTP providers, not custom engines
         if isinstance(getattr(lm, "_engine_spec", None), str):
-            lm.kwargs["timeout"] = self.timeout_seconds
+            lm.kwargs["timeout"] = min(self.timeout_seconds,
+                                       lm.kwargs.get("timeout") or self.timeout_seconds)
         return GuardedLM(lm, self, role)
 
     def sanitize(self, value, *, truncate: bool = True) -> str:
@@ -253,8 +260,10 @@ class ProviderRuntime:
             kwargs = {key: value for key, value in kwargs.items()
                       if key not in ("num_retries", "max_retries", "retry_strategy")}
             # Only set timeout for real HTTP providers, not custom engines
-            if "timeout" not in kwargs and isinstance(getattr(lm, "_engine_spec", None), str):
-                kwargs["timeout"] = self.timeout_seconds
+            if isinstance(getattr(lm, "_engine_spec", None), str):
+                kwargs["timeout"] = min(self.timeout_seconds,
+                                        lm.kwargs.get("timeout") or self.timeout_seconds,
+                                        kwargs.get("timeout") or self.timeout_seconds)
             full_prompt = self.sanitize(messages if messages is not None else prompt, truncate=False)
             trace = {"role": self.sanitize(role), "model": self.sanitize(lm.model),
                      "prompt": self.sanitize(messages if messages is not None else prompt),
@@ -263,13 +272,24 @@ class ProviderRuntime:
             if self.full_prompt_log:
                 trace["full_prompt"] = full_prompt
             history_size = len(lm.history)
-            retry_start_time = self._clock()
+            retry_start_time = self._elapsed_clock()
             for attempt in range(self.max_retries + 1):
                 # Fresh per-attempt row: never carry a previous attempt's retry labels.
                 trace = {**{key: value for key, value in trace.items()
                             if key not in ("retry_kind", "transient_error")}, "attempt": attempt + 1}
+                attempt_kwargs = dict(kwargs)
+                remaining = self.max_retry_wall_seconds - (self._elapsed_clock() - retry_start_time)
+                if remaining <= 0:
+                    self.failure = ProviderFailure(self.sanitize(
+                        f"{role} {lm.model}: retry wall time exceeded before attempt {attempt + 1}"))
+                    self.raise_if_failed()
+                if isinstance(getattr(lm, "_engine_spec", None), str):
+                    attempt_kwargs["timeout"] = min(kwargs["timeout"], remaining)
                 try:
-                    result = lm(prompt, messages=messages, **kwargs)
+                    result = lm(prompt, messages=messages, **attempt_kwargs)
+                    # A backend may ignore its timeout; never accept a late success.
+                    if self._elapsed_clock() - retry_start_time >= self.max_retry_wall_seconds:
+                        raise TimeoutError("retry wall time exceeded during provider call")
                     trace.update(status_code=None, error=None)
                     break
                 except Exception as error:
@@ -286,7 +306,7 @@ class ProviderRuntime:
                     if kind is not None and attempt < self.max_retries:
                         # 429 and transient transport failures share one bounded policy:
                         # same attempt counter, per-wait cap and per-call total wall cap.
-                        elapsed = self._clock() - retry_start_time
+                        elapsed = self._elapsed_clock() - retry_start_time
                         if elapsed >= self.max_retry_wall_seconds:
                             self.failure = ProviderFailure(
                                 self.sanitize(f"{role} {lm.model}: retry wall time exceeded ({elapsed:.1f}s)"))

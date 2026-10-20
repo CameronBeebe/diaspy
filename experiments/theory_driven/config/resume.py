@@ -52,6 +52,7 @@ def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
                "train_size": config.train_size, "val_size": config.val_size, "test_size": stage.test_size,
                "arm": variant, "arm_type": arm.arm_type, "arm_options": safe(arm.kwargs),
                "policy": policy or stage.survival_policy, "minimum": stage.min_survival_questions,
+               "held_out_regression_samples": stage.held_out_regression_samples,
                "budget": budget, "seed": seed, "stage_cap": stage.max_cost_dollars,
                "canary": {"model": stage.canary_model, "enabled": stage.run_canary,
                           "allow_drift": stage.allow_canary_drift}}

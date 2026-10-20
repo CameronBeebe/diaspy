@@ -174,8 +174,9 @@ class SurvivalEvaluator:
                 parent_scores: dict[str, float] | None = None) -> list[Evidence]:
         """Observe the full parent minibatch; preserve dropped citations for tracing.
         
-        Each question gets exactly one role, with precedence:
-        counterexample > defense > held_out_regression > archive > regression.
+        Primary roles follow counterexample > defense > held_out_regression
+        precedence. Archive constraints are retained independently; policies
+        group overlapping regression constraints into one vote per question.
         """
         questions = [example["Inputs"]["question"] for example in batch]
         # Include held-out questions in the scores to compute
@@ -220,16 +221,14 @@ class SurvivalEvaluator:
         # Held-out regression: deterministic samples from trainset.
         # These are pre-sampled at init and deduplicated against cited questions here.
         # They may overlap with the current GEPA minibatch (which is only known at runtime),
-        # but are excluded if cited as counterexamples/defense/archive.
+        # but are excluded if cited as counterexamples/defense.
         for question in self._held_out_questions:
             if question in included:
                 continue
             evidence.append(Evidence(question, "held_out_regression", scores[question], None, []))
             included.add(question)
-        # Archive: skip questions already included
+        # Archive references constrain even questions with another active role.
         for question, reference in self.archive.items():
-            if question in included:
-                continue
             evidence.append(Evidence(question, "archive", scores[question], None,
                                      citations.get(question, []), reference))
             included.add(question)
