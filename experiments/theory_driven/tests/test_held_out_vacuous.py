@@ -1,6 +1,5 @@
 """Test that held-out 0/0 rows are treated as vacuous and don't affect survival."""
 
-import pytest
 from experiments.theory_driven.arms.survival import Evidence, get_policy
 
 

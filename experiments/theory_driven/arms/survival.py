@@ -27,7 +27,6 @@ class Evidence:
     vacuous: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        reference = self.parent_score if self.reference_score is None else self.reference_score
         # Vacuous: rewrite is None (test didn't run), or both parent and rewrite score 0
         # Applies to regression, archive, defense, and held_out_regression roles
         self.vacuous = (self.role in {"regression", "archive", "defense", "held_out_regression"} 
