@@ -1,25 +1,18 @@
 """Tests for stage-0 reliability improvements: resume, unchanged candidates, deduplication, held-out samples."""
 
 import json
-from pathlib import Path
-import tempfile
-import pytest
 import dspy
 from dspy.utils.dummies import DummyLM
 
-from experiments.theory_driven.config.resume import any_result_cost, fingerprint, completed_result
-from experiments.theory_driven.config import ExperimentConfig, StageConfig
+from experiments.theory_driven.config.resume import any_result_cost, fingerprint
+from experiments.theory_driven.config import ExperimentConfig
 from experiments.theory_driven.arms.survival import SurvivalEvaluator, Evidence, ScorePolicy
 from experiments.theory_driven.arms.popperian import PopperianProposer, FailedAttempt, normalize_instruction
-from experiments.theory_driven.arms.millian import MillianProposer
 from experiments.theory_driven.config.budget_tracker import UnifiedBudget
 
 
 def test_any_result_cost_counts_aborted_runs(tmp_path):
     """Resume should count costs from aborted runs, not just completed ones."""
-    config = ExperimentConfig()
-    stage = config.get_stage_config(0)
-    
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     
@@ -43,8 +36,6 @@ def test_any_result_cost_counts_aborted_runs(tmp_path):
 
 def test_any_result_cost_returns_zero_when_no_match(tmp_path):
     """any_result_cost returns 0.0 when no matching run exists."""
-    config = ExperimentConfig()
-    
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     
@@ -79,7 +70,6 @@ def test_normalize_instruction_whitespace_only():
 
 def test_unchanged_parent_logged_explicitly():
     """When proposer returns parent unchanged, it should be explicitly logged."""
-    from dspy.utils.dummies import DummyLM
     
     class FakeEvidence:
         def __init__(self):
@@ -103,7 +93,7 @@ def test_unchanged_parent_logged_explicitly():
         budget_tracker=UnifiedBudget(100, 1.0, DummyLM([{"answer": "test"}])),
         max_attempts=2,
     )
-    proposer.evaluator = FakeEvidence()
+    proposer.evaluator = FakeEvidence()  # type: ignore[assignment]
     
     # When corroborate returns False, the output should include the parent
     result = proposer(

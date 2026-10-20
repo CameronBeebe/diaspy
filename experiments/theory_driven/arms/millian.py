@@ -100,6 +100,7 @@ class DebateRecord(BaseModel):
     survived: bool
     new_instruction: str
     tested_questions: list[str] = Field(default_factory=list)
+    returned_unchanged_parent: bool = False
 
 
 def _evidence_dicts(evidence: Sequence[Evidence]) -> list[dict[str, Any]]:
