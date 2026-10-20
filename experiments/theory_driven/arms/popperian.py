@@ -296,7 +296,21 @@ class PopperianProposer:
             # Return new instruction if it survived; otherwise skip re-scoring with {}
             if ok:
                 out[name] = new
-            # No else: returning {} is implicit when not setting out[name]
+            else:
+                # Failed to find a surviving rewrite: log the unchanged parent return
+                final_record = {
+                    "instruction": candidate[name],
+                    "rejection_reason": "max_attempts_reached_without_survival",
+                    "per_question": [
+                        {"question": q, "role": r.role, "parent_score": r.parent_score,
+                         "rewrite_score": r.rewrite_score, "fixed_or_kept": False}
+                        for q, r in evidence_map.items()
+                    ],
+                    "returned_unchanged_parent": True,
+                }
+                self.log.append(final_record)
+                if event_sink is not None:
+                    event_sink(final_record)
         
         return out
 
