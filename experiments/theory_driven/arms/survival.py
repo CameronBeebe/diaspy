@@ -27,12 +27,11 @@ class Evidence:
     vacuous: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        # Vacuous: rewrite is None (test didn't run), or rewrite==0 and reference==0
-        # For held_out_regression, reference is always parent_score
-        # For regression/archive/defense, reference can be overridden
+        # A no-regression check is vacuous iff its reference score is 0: it cannot regress.
+        # Archive rows compare against their historical reference_score; others against parent.
         reference = self.parent_score if self.reference_score is None else self.reference_score
-        self.vacuous = (self.role in {"regression", "archive", "defense", "held_out_regression"} 
-                       and (self.rewrite_score is None or (reference == 0 and self.rewrite_score == 0)))
+        self.vacuous = (self.role in {"regression", "archive", "defense", "held_out_regression"}
+                        and reference == 0)
 
 
 class AdmissionPolicy(Protocol):
