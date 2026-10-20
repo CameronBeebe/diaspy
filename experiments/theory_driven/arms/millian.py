@@ -216,7 +216,7 @@ class MillianProposer:
             calls: dict[str, int] = {}
             costs: dict[str, float] = {}
             batch = list(reflective_dataset[name])
-            shown = "\n".join(f"[{i} {json.dumps(row, default=str)}" for i, row in enumerate(batch))
+            shown = "\n".join(f"[{i}] {json.dumps(row, default=str)}" for i, row in enumerate(batch))
             with self._account("prosecutor", calls, costs), dspy.context(lm=self.critic_lm):
                 refutations = self.critique(
                     current_instruction=candidate[name], examples_with_feedback=shown,
