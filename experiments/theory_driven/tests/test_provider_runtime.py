@@ -178,10 +178,11 @@ class ScriptedEngine:
 
 @pytest.mark.parametrize("backoff,expected", [
     (2.0, [2.25, 4.25, 8.25, 16.25, 32.25]),
-    (30.0, [30.25, 60.0, 60.0, 60.0, 60.0]),
-    (60.0, [60.0, 60.0, 60.0, 60.0, 60.0]),
+    (30.0, [30.25, 60.25, 120.25, 240.25, 480.25]),
+    (60.0, [60.25, 120.25, 240.25, 480.25, 960.25]),
 ])
-def test_default_five_retries_recover_with_capped_injected_jitter(backoff, expected):
+def test_default_five_retries_recover_with_uncapped_exponential_backoff(backoff, expected):
+    """Exponential backoff is no longer capped at 60s, only Retry-After is capped."""
     module = runtime_module()
     delays = []
     runtime = module.ProviderRuntime(
