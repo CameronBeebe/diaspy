@@ -304,8 +304,6 @@ class MillianProposer:
                     attempt=attempt, prosecution=prosecution_record, millian=millian_record, winner=winner,
                 ))
                 if winner is not None:
-                    # Winner found - set out[name] to the winning instruction
-                    out[name] = prose if winner == "prosecution" else mill
                     break
             final = attempts[-1]
             record = DebateRecord(
