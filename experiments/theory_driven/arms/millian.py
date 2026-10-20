@@ -209,13 +209,14 @@ class MillianProposer:
         for name in components_to_update:
             if name not in candidate or name not in reflective_dataset:
                 continue
-            # Don't set out[name] yet - only set it if a winner is found
+            # When max_attempts is 0, keep the parent (don't try to optimize)
             if self.max_attempts <= 0:
+                out[name] = candidate[name]
                 continue
             calls: dict[str, int] = {}
             costs: dict[str, float] = {}
             batch = list(reflective_dataset[name])
-            shown = "\n".join(f"[{i}] {json.dumps(row, default=str)}" for i, row in enumerate(batch))
+            shown = "\n".join(f"[{i} {json.dumps(row, default=str)}" for i, row in enumerate(batch))
             with self._account("prosecutor", calls, costs), dspy.context(lm=self.critic_lm):
                 refutations = self.critique(
                     current_instruction=candidate[name], examples_with_feedback=shown,

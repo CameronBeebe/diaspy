@@ -244,7 +244,7 @@ def test_no_corroborated_counterexample_keeps_parent():
     proposer, _, _, _, _, events, batch = make_proposer(
         parent=(1, 0, 1, 1), prosecution=(1, 1), millian=(1, 1),
     )
-    assert proposer({"answer": "Parent"}, batch, ["answer"]) == {"answer": "Parent"}
+    assert proposer({"answer": "Parent"}, batch, ["answer"]) == {}  # Returns {} when no corroboration
     assert events[0]["received_view_survived"]
     assert events[0]["prosecution"]["rationale"]["reason"] == "no_corroborated_counterexample"
     assert not proposer.archive
