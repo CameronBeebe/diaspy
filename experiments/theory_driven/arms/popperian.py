@@ -224,12 +224,12 @@ class PopperianProposer:
                     "critique_calls_consumed": critique_calls, "critique_cost_consumed": critique_cost,
                     "parent_calls_consumed": self.budget_tracker.total_units - parent_before,
                     "parent_cost_consumed": self.budget_tracker.total_cost - parent_cost_before,
-                    "unchanged_parent_returned": True,
+                    "returned_unchanged_parent": True,
                 }
                 self.log.append(record)
                 if self.event_sink is not None:
                     self.event_sink(record)
-                # Don't set out[name] - let GEPA keep the parent without re-scoring
+                out[name] = candidate[name]
                 continue
             # Rewrite attempts
             new = candidate[name]
@@ -290,10 +290,12 @@ class PopperianProposer:
                     new, self.last_evidence, self.last_rationale["reason"], self.evaluator.eps))
             
             # Return new instruction if it survived, otherwise return old instruction
-            # This rejects failing rewrites immediately instead of letting GEPA test them
+            # Explicitly log when returning parent unchanged
             if ok:
                 out[name] = new
-            # If not ok, don't set out[name] - let GEPA keep parent without re-scoring
+            else:
+                # Log that we're returning the parent unchanged, which GEPA will re-score
+                out[name] = candidate[name]
         
         return out
 

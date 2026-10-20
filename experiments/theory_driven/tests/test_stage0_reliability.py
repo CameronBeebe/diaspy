@@ -77,10 +77,8 @@ def test_normalize_instruction_whitespace_only():
     assert normalize_instruction("Hello World") == "Hello World"
 
 
-def test_unchanged_parent_not_in_output():
-    """When proposer returns parent unchanged, it should not appear in output dict."""
-    # This tests the proposer behavior - when no corroborated counterexample,
-    # the proposer should NOT set out[name], letting GEPA skip re-scoring
+def test_unchanged_parent_logged_explicitly():
+    """When proposer returns parent unchanged, it should be explicitly logged."""
     from dspy.utils.dummies import DummyLM
     
     class FakeEvidence:
@@ -107,19 +105,19 @@ def test_unchanged_parent_not_in_output():
     )
     proposer.evaluator = FakeEvidence()
     
-    # When corroborate returns False, the output should NOT include the component
+    # When corroborate returns False, the output should include the parent
     result = proposer(
         candidate={"Q": "parent instruction"},
         reflective_dataset={"Q": [{"Inputs": {"question": "test"}}]},
         components_to_update=["Q"]
     )
     
-    # The key should NOT be in the result
-    assert "Q" not in result
+    # The parent should be returned
+    assert result == {"Q": "parent instruction"}
     
     # Check the log to verify it was marked as unchanged
     assert len(proposer.log) == 1
-    assert proposer.log[0].get("unchanged_parent_returned") is True
+    assert proposer.log[0].get("returned_unchanged_parent") is True
 
 
 def test_joint_set_deduplication_counterexample_takes_precedence():

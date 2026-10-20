@@ -208,7 +208,7 @@ class MillianProposer:
         for name in components_to_update:
             if name not in candidate or name not in reflective_dataset:
                 continue
-            # Don't set out[name] initially - only set it if we find a passing rewrite
+            out[name] = candidate[name]  # Default: return parent
             if self.max_attempts <= 0:
                 continue
             calls: dict[str, int] = {}
@@ -236,12 +236,12 @@ class MillianProposer:
                     prosecution=skipped, millian=skipped, attempts=[], winner=None,
                     received_view_survived=True, rationale=reason, role_calls=calls, role_costs=costs,
                     calls_consumed=0, cost_consumed=0, survived=False, new_instruction=candidate[name],
-                    unchanged_parent_returned=True,
+                    returned_unchanged_parent=True,
                 ).model_dump(mode="json")
                 self.log.append(record)
                 if self.event_sink is not None:
                     self.event_sink(record)
-                # Don't set out[name] - let GEPA keep parent without re-scoring
+                # out[name] already set to candidate[name] above
                 continue
             evidence: list[Evidence] = []
             prepared = False
