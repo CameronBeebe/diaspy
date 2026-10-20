@@ -28,7 +28,10 @@ class Evidence:
 
     def __post_init__(self) -> None:
         reference = self.parent_score if self.reference_score is None else self.reference_score
-        self.vacuous = self.role in {"regression", "archive", "defense"} and reference == 0
+        # Vacuous: rewrite is None (test didn't run), or both parent and rewrite score 0
+        # Applies to regression, archive, defense, and held_out_regression roles
+        self.vacuous = (self.role in {"regression", "archive", "defense", "held_out_regression"} 
+                       and (self.rewrite_score is None or (self.parent_score == 0 and self.rewrite_score == 0)))
 
 
 class AdmissionPolicy(Protocol):
