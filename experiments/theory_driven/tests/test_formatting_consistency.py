@@ -1,7 +1,5 @@
 """Test that B and M format prompts identically where they should."""
 
-import json
-
 
 def test_b_and_m_format_example_blocks_identically():
     """B and M must format [i] {...} blocks identically for prosecutor prompts.
