@@ -91,6 +91,7 @@ class PreFlightGate:
         print(f"Stage {stage_id}: {stage.models}, {stage.benchmarks}, arms {stage.arms}")
         print("Planned calls per role (adaptive ranges):")
         print(json.dumps(plan, indent=2))
+        print("Dry-run only: no LLM calls or dataset downloads made.")
         if plan["max_cost"] == 0:
             print("Model cost: $0.00 (free model); no LLM calls made by dry-run.")
         else:
@@ -101,11 +102,15 @@ class PreFlightGate:
     def run_all_checks(self, stage_id: int, require_confirm: bool = False) -> bool:
         if stage_id != 0:
             raise ValueError("Only stage 0 is supported by this gate")
-        target = "experiments/theory_driven"
+        target = str(self.experiment_dir)
+        config = str(self.experiment_dir / "verification" / "pyproject.toml")
         checks = [
-            self._run("ruff", ["ruff", "check", target]),
-            self._run("pyright", ["pyright", target]),
-            self._run("offline_tests", ["pytest", f"{target}/tests", "--disable-socket", "-q"]),
+            self._run("ruff", ["ruff", "check", "--no-cache", "--config", config, target]),
+            self._run("pyright", ["pyright", "--project", config,
+                                  "--pythonpath", sys.executable, target]),
+            self._run("offline_tests", ["pytest", "-c", config,
+                                        f"{target}/tests", "--disable-socket", "-q",
+                                        "-p", "no:cacheprovider"]),
         ]
         checks.append(self.run_dry_run(stage_id)[0])
         return all(checks)

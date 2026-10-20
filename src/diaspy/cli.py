@@ -1,9 +1,38 @@
+"""Safe package entry point; model execution requires explicit confirmation."""
+import argparse
 import os
-import dspy
-from .responders import DialecticResponder
-from .utils import compile_agents, trainset
+import sys
 
-def main():
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command")
+    commands.add_parser("experiment", help="Stage-zero experiment (use --dry-run)", add_help=False)
+    legacy = commands.add_parser("legacy", help="Original interactive xAI demo (paid)")
+    legacy.add_argument("--confirm", action="store_true", help="Allow paid model calls")
+    if argv and argv[0] == "experiment":
+        # LiteLLM can fetch pricing at import time; planning never needs it.
+        os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+        from experiments.theory_driven.run_staged import main as experiment_main
+        return experiment_main(argv[1:])
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
+    if not args.confirm:
+        legacy.error("Model execution requires --confirm")
+    if not os.environ.get("XAI_API_KEY"):
+        legacy.error("XAI_API_KEY environment variable is not set")
+    _legacy_main()
+    return 0
+
+
+def _legacy_main():
+    import dspy
+    from .responders import DialecticResponder
+    from .utils import compile_agents, trainset
+
     api_key = os.environ.get('XAI_API_KEY')
     if not api_key:
         raise ValueError("XAI_API_KEY environment variable is not set.")
@@ -39,4 +68,4 @@ def main():
             print(f"Error: {str(e)}\n")
 
 if __name__ == '__main__':
-    main() 
+    raise SystemExit(main())

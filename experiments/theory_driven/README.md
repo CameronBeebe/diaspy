@@ -5,8 +5,8 @@
 From the repository root, use Python 3.12 and install:
 
 ```sh
-python -m pip install -e .
-python -m pip install -r experiments/theory_driven/requirements.txt
+python -m pip install -e '.[dev]'
+export LITELLM_LOCAL_MODEL_COST_MAP=True
 python -m pytest experiments/theory_driven/tests --disable-socket
 python -m experiments.theory_driven.preflight --stage 0
 python -m experiments.theory_driven.run_staged --stage 0 --dry-run
