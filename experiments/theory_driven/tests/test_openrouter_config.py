@@ -12,7 +12,8 @@ def test_openrouter_reasoning_is_object(enabled):
     assert not isinstance(reasoning, bool)
     assert reasoning["enabled"] is enabled
     assert kwargs["extra_body"]["provider"] == {
-        "allow_fallbacks": False, "require_parameters": True,
+        "allow_fallbacks": None,  # None by default, can be overridden by stage config or env var
+        "require_parameters": True,
     }
 
 
