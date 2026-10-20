@@ -57,10 +57,13 @@ class FailedAttempt(pydantic.BaseModel):
         rows = []
         for row in evidence:
             reference = row.parent_score if row.reference_score is None else row.reference_score
-            # Include held_out_regression in keepable roles, and skip vacuous checks
+            # Skip vacuous checks entirely (neither fixed nor kept, just no observation)
+            if row.vacuous:
+                continue
+            # Include held_out_regression in keepable roles, and handle vacuous checks properly
             passed = row.rewrite_score is not None and (
                 row.rewrite_score > row.parent_score + eps if row.role == "counterexample"
-                else row.role in {"regression", "archive", "defense", "held_out_regression"} and not row.vacuous
+                else row.role in {"regression", "archive", "defense", "held_out_regression"}
                 and row.rewrite_score >= reference - eps)
             rows.append(AttemptQuestion(question_id=row.question, role=row.role,
                                         parent_score=row.parent_score, rewrite_score=row.rewrite_score,
