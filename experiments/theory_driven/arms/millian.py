@@ -209,7 +209,7 @@ class MillianProposer:
         for name in components_to_update:
             if name not in candidate or name not in reflective_dataset:
                 continue
-            out[name] = candidate[name]  # Default: return parent
+            # Don't set out[name] yet - only set it if a winner is found
             if self.max_attempts <= 0:
                 continue
             calls: dict[str, int] = {}
@@ -304,6 +304,8 @@ class MillianProposer:
                     attempt=attempt, prosecution=prosecution_record, millian=millian_record, winner=winner,
                 ))
                 if winner is not None:
+                    # Winner found - set out[name] to the winning instruction
+                    out[name] = prose if winner == "prosecution" else mill
                     break
             final = attempts[-1]
             record = DebateRecord(
@@ -315,16 +317,15 @@ class MillianProposer:
                            **self.evaluator.last_metadata,
                            "selection_order": ["total_gain", "shorter_instruction", "prosecution"]},
                 role_calls=calls, role_costs=costs, calls_consumed=sum(calls.values()),
-                cost_consumed=sum(costs.values()), survived=winner is not None, new_instruction=out[name],
+                cost_consumed=sum(costs.values()), survived=winner is not None,
+                new_instruction=out.get(name, candidate[name]),  # Use .get() since out[name] may not be set
                 tested_questions=[item.question for item in evidence if not item.role.startswith("uncorroborated")],
                 returned_unchanged_parent=winner is None,
             ).model_dump(mode="json")
             self.log.append(record)
             if self.event_sink is not None:
                 self.event_sink(record)
-            if winner is None:
-                # Return {} to skip GEPA re-scoring when received view survived
-                del out[name]
+            # No need to delete out[name] - it's only set if winner is not None
         return out
 
 
