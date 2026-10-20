@@ -1,6 +1,7 @@
 """Real offline typed debate calls and score-based Millian selection."""
 
 import json
+from typing import Any
 
 import dspy
 import pytest
@@ -47,7 +48,7 @@ def make_proposer(parent=(0, 0, 1, 1), prosecution=(1, 0), millian=(0.6, 1),
         defender_lm=defender, min_survival_questions=2, max_attempts=max_attempts,
         event_sink=events.append, **kwargs,
     )
-    batch = {"answer": [{"Inputs": {"question": question}} for question in gold]}
+    batch: dict[str, list[dict[str, Any]]] = {"answer": [{"Inputs": {"question": question}} for question in gold]}
     return proposer, task, reflection, defender, budget, events, batch
 
 
@@ -159,10 +160,10 @@ def test_failed_rivals_keep_parent_retry_cap_and_emit_one_round_record():
     assert events[0]["winner"] is None
     assert events[0]["received_view_survived"] is True
     assert not proposer.archive
-    assert len(task.history) == 12
+    assert len(task.history) == 8  # repeated rivals on attempt 2 are not evaluated again
     assert len(reflection.history) == 5
     assert len(defender.history) == 1
-    assert budget.used_calls() == events[0]["calls_consumed"] == 18
+    assert budget.used_calls() == events[0]["calls_consumed"] == 14
 
 
 def test_aliased_reflection_and_defender_have_exact_role_counts():

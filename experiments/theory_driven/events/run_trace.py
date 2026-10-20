@@ -53,13 +53,15 @@ class RunTrace:
 
     def proposal(self, record: dict[str, Any]) -> None:
         """Persist survival admission, never GEPA's later acceptance decision."""
-        if record.get("kind") == "millian_debate":
-            # The typed debate record contains both rivals, not a fictitious single step.
+        if record.get("kind") in {"millian_debate", "gepa_proposal"}:
+            is_gepa = record["kind"] == "gepa_proposal"
+            # Full delegated proposal or typed rival-debate payload.
             event = EpistemicEvent(
                 event_id=uuid4().hex, event_type="optimization_step",
                 experiment_name=self.emitter.experiment_name,
                 benchmark_name=self.emitter.benchmark_name, run_id=self.run_id,
-                metadata={"decision_scope": "proposal_survival_admission", "debate": record},
+                metadata={"decision_scope": "gepa_candidate_acceptance" if is_gepa else "proposal_survival_admission",
+                          "proposal" if is_gepa else "debate": record},
             )
             self.emitter.events.append(event)
             self._persist()
@@ -107,7 +109,9 @@ class RunTrace:
         event.metadata = {
             "decision_scope": "proposal_survival_admission",
             "attempt": record["attempt"], "tested_questions": questions,
-            **{key: record[key] for key in ("policy", "evidence", "rationale", "severity_usage")
+            **{key: record[key] for key in ("policy", "evidence", "rationale", "severity_usage",
+                                           "critique_calls_consumed", "critique_cost_consumed",
+                                           "parent_calls_consumed", "parent_cost_consumed")
                if key in record},
         }
         self._persist()

@@ -68,9 +68,9 @@ def test_no_valid_survival_questions_keeps_parent(refutations):
     assert proposer.log[-1]["survived"] is False
     assert proposer.log[-1]["checked_ids"] == []
     assert proposer.archive == {}
-    assert len(task.history) == 1  # parent is observed even with no surviving citation
-    assert len(critic.history) == 2
-    assert budget.used_calls() == 3
+    assert len(task.history) == 0  # no citations: no observation or rewrite is needed
+    assert len(critic.history) == 1
+    assert budget.used_calls() == 1
 
 
 @pytest.mark.parametrize("counterexample_id", [-1, -2])
@@ -88,9 +88,9 @@ def test_negative_survival_ids_are_ignored(counterexample_id, archive_answer):
     assert result == candidate  # no corroborated counterexample, even if archive kept
     assert proposer.log[-1]["survived"] is False
     assert proposer.log[-1]["rationale"]["reason"] == "no_corroborated_counterexample"
-    assert proposer.log[-1]["checked_ids"] == ([] if archive_answer is None else ["archived"])
+    assert proposer.log[-1]["checked_ids"] == []
     assert proposer.archive == ({} if archive_answer is None else {"archived": 1.0})
-    assert len(task.history) == (1 if archive_answer is None else 3)
+    assert len(task.history) == 0
 
 
 def test_no_rewrite_attempts_keeps_parent():
@@ -120,7 +120,7 @@ def test_policy_reaches_proposer_and_trace_preserves_descriptive_evidence(policy
     assert record["severity_usage"] == "descriptive_only"
     assert record["rationale"]["counterexamples_fixed"] == 1
     assert record["evidence"] == [{"question": "q", "role": "counterexample", "parent_score": 0.0,
-                                   "rewrite_score": 1.0, "reference_score": None,
+                                   "rewrite_score": 1.0, "reference_score": None, "vacuous": False,
                                    "refutations": record["refutations"]}]
 
 

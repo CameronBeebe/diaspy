@@ -3,10 +3,11 @@
 Refutations (including severity) are descriptive provenance, not policy inputs.
 """
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 import logging
+import math
 from statistics import median
 
 import dspy
@@ -23,6 +24,11 @@ class Evidence:
     rewrite_score: float | None
     refutations: list[dict[str, Any]]
     reference_score: float | None = None
+    vacuous: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        reference = self.parent_score if self.reference_score is None else self.reference_score
+        self.vacuous = self.role in {"regression", "archive", "defense"} and reference == 0
 
 
 class AdmissionPolicy(Protocol):
@@ -46,7 +52,7 @@ class ScorePolicy:
                     for e in counterexamples)
         regressions: dict[str, list[Evidence]] = {}
         for row in evidence:
-            if row.role in {"regression", "archive", "defense"}:
+            if row.role in {"regression", "archive", "defense"} and not row.vacuous:
                 regressions.setdefault(row.question, []).append(row)
 
         def kept(e: Evidence) -> bool:
@@ -59,6 +65,8 @@ class ScorePolicy:
                   if any(e.role == "archive" and not kept(e) for e in rows)]
         if self.name == "strict":
             admitted = fixed == len(counterexamples) and n_kept == len(regressions)
+        elif self.name == "half_no_regress":
+            admitted = fixed > 0 and fixed * 2 >= len(counterexamples) and n_kept == len(regressions)
         else:
             # Empty regression groups are vacuously kept; a single real fix can pass.
             admitted = fixed * 2 > len(counterexamples) and (
@@ -78,7 +86,7 @@ def get_policy(name_or_policy: str | AdmissionPolicy, eps: float = 0.0) -> Admis
     """Resolve a built-in policy or accept a caller-supplied policy object."""
     if not isinstance(name_or_policy, str):
         return name_or_policy
-    if name_or_policy not in {"strict", "majority", "veto"}:
+    if name_or_policy not in {"strict", "majority", "veto", "half_no_regress"}:
         raise ValueError(f"Unknown survival policy: {name_or_policy}")
     return ScorePolicy(name_or_policy, eps)
 
@@ -99,6 +107,7 @@ class SurvivalEvaluator:
         self.archive_cap = archive_cap
         self.eps = eps
         self.archive: dict[str, float] = {}
+        self.last_metadata: dict[str, Any] = {}
         if severity_tau is not None:
             logging.getLogger(__name__).warning(
                 "severity_tau is deprecated: explicit legacy filtering is enabled")
@@ -118,11 +127,42 @@ class SurvivalEvaluator:
                 scores[question] = float(result.score)
         return scores
 
+    def corroborate(self, candidate: dict[str, str], refutations: list,
+                    batch: list) -> tuple[bool, dict[str, float]]:
+        """Reuse real GEPA output observations, never numbers parsed from feedback.
+
+        GEPA's `Generated Outputs` is a predictor output, not a program output.
+        Only single-predictor programs can reuse it here. Incomplete legacy or
+        multi-predictor traces require an explicitly accounted full-parent rollout.
+        Empty/invalid citations need no observation at all.
+        """
+        cited = {i for ref in refutations
+                 if self.severity_tau is None or ref.severity >= self.severity_tau
+                 for i in ref.counterexample_ids if 0 <= i < len(batch)}
+        if not cited:
+            return False, {}
+        scores: dict[str, float] = {}
+        if len(list(self.program.named_predictors())) == 1:
+            for example in batch:
+                question = example["Inputs"]["question"]
+                outputs = example.get("Generated Outputs")
+                if isinstance(outputs, Mapping):
+                    result = self.metric(self.gold[question], dspy.Prediction(**outputs), None, None, None)
+                    score = float(result.score)
+                    if not math.isfinite(score):
+                        raise ValueError("Non-finite observed parent score")
+                    scores[question] = score
+        questions = [example["Inputs"]["question"] for example in batch]
+        scores.update(self._scores(candidate, [q for q in questions if q not in scores]))
+        return any(scores[questions[i]] < 1 for i in cited), scores
+
     def prepare(self, candidate: dict[str, str], refutations: list, batch: list,
-                protected_ids: list[int] | None = None) -> list[Evidence]:
+                protected_ids: list[int] | None = None,
+                parent_scores: dict[str, float] | None = None) -> list[Evidence]:
         """Observe the full parent minibatch; preserve dropped citations for tracing."""
         questions = [example["Inputs"]["question"] for example in batch]
-        scores = self._scores(candidate, [*questions, *self.archive])
+        scores = dict(parent_scores or {})
+        scores.update(self._scores(candidate, [q for q in [*questions, *self.archive] if q not in scores]))
         citations: dict[str, list[dict[str, Any]]] = {}
         for refutation in refutations:
             ref = refutation.model_dump() if hasattr(refutation, "model_dump") else dict(refutation)
@@ -148,7 +188,8 @@ class SurvivalEvaluator:
                 if not 0 <= i < len(questions):
                     continue
                 question = questions[i]
-                role = "defense" if scores[question] >= threshold else "uncorroborated_defense"
+                role = ("defense" if scores[question] > 0 and scores[question] >= threshold
+                        else "uncorroborated_defense")
                 evidence.append(Evidence(question, role, scores[question], None,
                                          citations.get(question, [])))
                 if role == "defense":
@@ -158,13 +199,21 @@ class SurvivalEvaluator:
             evidence.append(Evidence(question, "archive", scores[question], None,
                                      citations.get(question, []), reference))
             included.add(question)
-        for question in dict.fromkeys(questions):
-            if len(included) >= self.min_survival_questions:
+        def non_vacuous_count() -> int:
+            return len({e.question for e in evidence if not e.vacuous
+                        and not e.role.startswith("uncorroborated")})
+
+        for question in sorted(dict.fromkeys(questions), key=lambda q: scores[q] <= 0):
+            if non_vacuous_count() >= self.min_survival_questions:
                 break
             if question not in included:
                 evidence.append(Evidence(question, "regression", scores[question], None,
                                          citations.get(question, [])))
                 included.add(question)
+        self.last_metadata = {"thin_survival_set": non_vacuous_count() < self.min_survival_questions,
+                              "non_vacuous_questions": non_vacuous_count()}
+        if self.last_metadata["thin_survival_set"]:
+            logging.getLogger(__name__).warning("thin_survival_set: %s", self.last_metadata)
         return evidence
 
     def evaluate(self, candidate: dict[str, str], predictor_name: str, instruction: str,

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from experiments.theory_driven.config import ExperimentConfig, StageConfig, CanarySuite
+from experiments.theory_driven.config.variants import parse_arm_variant
 
 
 class PreFlightGate:
@@ -39,14 +40,25 @@ class PreFlightGate:
         multiplier = len(stage.models) * len(stage.benchmarks) * stage.n_seeds
         runs = multiplier * len(stage.arms) * len(stage.budgets)
         optimization = multiplier * len(stage.arms) * sum(stage.budgets)
-        reflection = multiplier * ("A" in stage.arms) * sum(stage.budgets)
-        critic = multiplier * sum(arm in {"B", "C", "M"} for arm in stage.arms) * sum(stage.budgets)
+        reflection = multiplier * sum(parse_arm_variant(a)[0] == "A" for a in stage.arms) * sum(stage.budgets)
+        critic = multiplier * sum(parse_arm_variant(arm)[0] in {"B", "C", "M"} for arm in stage.arms) * sum(stage.budgets)
         test_calls = runs * stage.test_size
         canary_calls = len(CanarySuite.DEFAULT_CANARIES) if stage.run_canary else 0
+        # Planning assumption, not a provider quote or hard billing bound: each call
+        # uses <=8k input/2k output tokens at the configured planning token prices.
+        # Allow a conservative 100-call final-iteration overshoot per run.
+        planned_calls = optimization + test_calls + canary_calls + runs * 100
+        cost_per_call = (8000 * config.model_config.cost_per_million_input
+                         + 2000 * config.model_config.cost_per_million_output) / 1_000_000
         return {
+            "estimated_worst_case_cost_usd": round(planned_calls * cost_per_call, 6),
+            "estimate_assumptions": {"input_tokens_per_call": 8000, "output_tokens_per_call": 2000,
+                                     "iteration_overshoot_calls_per_run": 100,
+                                     "pricing": "configured planning rates; not a live quote",
+                                     "not_a_hard_bound": True},
             "total_runs": runs,
             "optimization_call_cap": optimization,
-            "proposer_calls_per_attempt": {a: {"A": 1, "B": 2, "C": 2, "M": 4}.get(a)
+            "proposer_calls_per_attempt": {a: {"A": 1, "B": 2, "C": 2, "M": 4}.get(parse_arm_variant(a)[0])
                                            for a in stage.arms},
             "survival_policy": stage.survival_policy,
             "min_survival_questions": stage.min_survival_questions,

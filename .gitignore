@@ -17,4 +17,5 @@ env/
 
 # Project-specific
 local_cache/
+experiments/theory_driven/results/
 *.log

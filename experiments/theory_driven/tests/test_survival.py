@@ -33,6 +33,11 @@ def test_strict_single_counterexample_uses_relative_improvement(parent, rewrite,
     ("majority", [True], [True, True], [False], True),
     ("veto", [True], [True, True], [False], False),
     ("veto", [True], [], [True], True),
+    ("half_no_regress", [True, False], [True], [], True),
+    ("half_no_regress", [True, False], [False], [], False),
+    ("half_no_regress", [False], [True], [], False),
+    ("half_no_regress", [True], [], [False], False),
+    ("half_no_regress", [], [True], [], False),
     ("strict", [], [True], [], False),
     ("majority", [], [True], [], False),
     ("veto", [], [True], [], False),
@@ -163,6 +168,33 @@ def test_severity_independent_admission_and_fixed_only_archive(policy):
         outcomes.append((admitted, evaluator.archive))
     assert outcomes[0] == outcomes[1]
     assert outcomes[0] == ((False, {}) if policy == "strict" else (True, {"r": 0.6}))
+
+
+@pytest.mark.parametrize("policy", ["strict", "majority", "veto", "half_no_regress"])
+def test_zero_reference_checks_are_flagged_and_excluded(policy):
+    from dataclasses import asdict
+    s = survival_module()
+    rows = [s.Evidence("c", "counterexample", 0, 1, []),
+            s.Evidence("r", "regression", 1, 0, []),
+            s.Evidence("z", "regression", 0, 0, []),
+            s.Evidence("a", "archive", 1, 0, [], 0)]
+    admitted, rationale = s.get_policy(policy)(rows)
+    assert not admitted
+    assert rationale["regressions_kept"] == 0
+    assert rationale["regressions_total"] == 1
+    assert [asdict(e)["vacuous"] for e in rows] == [False, False, True, True]
+
+
+def test_zero_defense_dropped_padding_prefers_positive_and_thin_is_logged(caplog):
+    evaluator, _ = make_evaluator([0, 0, 0.6, 0], min_survival_questions=2)
+    rows = evaluator.prepare({"answer": "parent"}, [{"counterexample_ids": [0], "severity": 0}],
+                             [{"Inputs": {"question": q}} for q in ("c", "r", "z")],
+                             protected_ids=[1])
+    assert [(e.question, e.role) for e in rows] == [
+        ("c", "counterexample"), ("r", "uncorroborated_defense"), ("z", "regression")]
+    evaluator.min_survival_questions = 4
+    evaluator.prepare({"answer": "parent"}, [], [{"Inputs": {"question": "c"}}])
+    assert "thin_survival_set" in caplog.text
 
 
 def test_explicit_legacy_severity_filter_warns_and_zero_archive_cap(caplog):

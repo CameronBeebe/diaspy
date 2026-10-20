@@ -34,10 +34,45 @@ class Critique(dspy.Signature):
     refutations: List[Refutation] = dspy.OutputField()
 
 
+def normalize_instruction(instruction: str) -> str:
+    return " ".join(instruction.split())
+
+
+class AttemptQuestion(pydantic.BaseModel):
+    question_id: str
+    role: str
+    parent_score: float
+    rewrite_score: float | None
+    fixed_or_kept: bool
+
+
+class FailedAttempt(pydantic.BaseModel):
+    instruction: str
+    per_question: List[AttemptQuestion]
+    rejection_reason: str
+
+    @classmethod
+    def from_evidence(cls, instruction: str, evidence: Sequence[Evidence], reason: str,
+                      eps: float = 0.0) -> "FailedAttempt":
+        rows = []
+        for row in evidence:
+            reference = row.parent_score if row.reference_score is None else row.reference_score
+            passed = row.rewrite_score is not None and (
+                row.rewrite_score > row.parent_score + eps if row.role == "counterexample"
+                else row.role in {"regression", "archive", "defense"} and not row.vacuous
+                and row.rewrite_score >= reference - eps)
+            rows.append(AttemptQuestion(question_id=row.question, role=row.role,
+                                        parent_score=row.parent_score, rewrite_score=row.rewrite_score,
+                                        fixed_or_kept=passed))
+        return cls(instruction=instruction, per_question=rows, rejection_reason=reason)
+
+
 class Rewrite(dspy.Signature):
     """Rewrite the instruction so that it survives every refutation. Address each one."""
     current_instruction: str = dspy.InputField()
     refutations: List[Refutation] = dspy.InputField()
+    failed_attempts: List[FailedAttempt] = dspy.InputField(
+        desc="All failed rewrites this round and their observed per-question refutations. Do not repeat them.")
     new_instruction: str = dspy.OutputField()
 
 
@@ -164,28 +199,65 @@ class PopperianProposer:
                 refutations = critique_result.refutations
             
             
+            if self.max_attempts <= 0:
+                out[name] = candidate[name]
+                continue
+            critique_calls = self.budget_tracker.total_units - calls_before
+            critique_cost = self.budget_tracker.total_cost - cost_before
+            parent_before = self.budget_tracker.total_units
+            parent_cost_before = self.budget_tracker.total_cost
+            corroborated, parent_scores = self.evaluator.corroborate(candidate, refutations, batch)
+            if not corroborated:
+                record = {
+                    "policy": self.policy.name, "attempt": 0, "predictor": name,
+                    "old_instruction": candidate[name], "new_instruction": candidate[name],
+                    "refutations": [r.model_dump() for r in refutations], "n_refutations": len(refutations),
+                    "evidence": [], "checked_ids": [], "tested_questions": [], "survived": False,
+                    "rationale": {"reason": "no_corroborated_counterexample"},
+                    "severity_usage": "descriptive_only", "calls_consumed": 0, "cost_consumed": 0.0,
+                    "critique_calls_consumed": critique_calls, "critique_cost_consumed": critique_cost,
+                    "parent_calls_consumed": self.budget_tracker.total_units - parent_before,
+                    "parent_cost_consumed": self.budget_tracker.total_cost - parent_cost_before,
+                }
+                self.log.append(record)
+                if self.event_sink is not None:
+                    self.event_sink(record)
+                out[name] = candidate[name]
+                continue
             # Rewrite attempts
             new = candidate[name]
             ok = False
-            evidence = (self.evaluator.prepare(candidate, refutations, batch)
-                        if self.max_attempts > 0 else [])
+            evidence: list[Evidence] | None = None
+            seen = {normalize_instruction(candidate[name])}
+            self.evaluator.last_metadata = {}
+            failed_attempts: list[FailedAttempt] = []
             for attempt in range(1, self.max_attempts + 1):
                 with dspy.context(lm=self.critic_lm):
                     rewrite_result = self.rewrite(
                         current_instruction=candidate[name],
-                        refutations=refutations
+                        refutations=refutations,
+                        failed_attempts=failed_attempts,
                     )
                     new = rewrite_result.new_instruction
                 
                 
                 # Survival check
-                ok, ids = self.survives(name, new, refutations, batch, candidate, evidence)
+                normalized = normalize_instruction(new)
+                if normalized in seen:
+                    ok, ids = False, []
+                    self.last_evidence = []
+                    self.last_rationale = {"reason": "duplicate_rewrite"}
+                else:
+                    if evidence is None:
+                        evidence = self.evaluator.prepare(candidate, refutations, batch, parent_scores=parent_scores)
+                    ok, ids = self.survives(name, new, refutations, batch, candidate, evidence)
+                seen.add(normalized)
                 
                 record = {
                     "policy": self.policy.name,
                     "evidence": [asdict(e) for e in self.last_evidence],
                     "severity_usage": "descriptive_only",
-                    "rationale": self.last_rationale,
+                    "rationale": {**self.last_rationale, **self.evaluator.last_metadata},
                     "legacy_severity_tau": self.evaluator.severity_tau,
                     "attempt": attempt,
                     "predictor": name,
@@ -207,6 +279,8 @@ class PopperianProposer:
                 
                 if ok:
                     break
+                failed_attempts.append(FailedAttempt.from_evidence(
+                    new, self.last_evidence, self.last_rationale["reason"], self.evaluator.eps))
             
             # Return new instruction if it survived, otherwise return old instruction
             # This rejects failing rewrites immediately instead of letting GEPA test them

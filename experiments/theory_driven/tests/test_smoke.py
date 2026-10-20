@@ -72,6 +72,7 @@ def tiny_run(tmp_path, caplog, monkeypatch):
     harness = ExperimentHarness(config, lm_factory=factory,
                                 benchmark_factory=lambda name: HotpotQABenchmark(name, fixture_path=fixture))
     stage = config.get_stage_config(0)
+    stage.arms = ["A", "B@majority", "M@half_no_regress"]
     stage.budgets = [8]
     results = run_stage0(config, harness=harness, stage=stage)
     assert "reflection failed" not in caplog.text
@@ -83,7 +84,7 @@ def tiny_run(tmp_path, caplog, monkeypatch):
 
 def test_all_three_arms_complete_and_account_for_test_evaluation(tiny_run):
     results, runs = tiny_run
-    assert [r["arm"] for r in results] == ["A", "B", "M"]
+    assert [r["arm"] for r in results] == ["A", "B@majority", "M@half_no_regress"]
     for result, lms in zip(results, runs, strict=True):
         assert result["status"] == "success", result
         assert result["test_size"] == len(result["test_scores"]) == 1
@@ -105,12 +106,20 @@ def test_all_three_arms_complete_and_account_for_test_evaluation(tiny_run):
         assert events[0]["event_type"] == "initialization"
         assert events[-1]["event_type"] == "finalization"
         proposals = [event for event in events if event["event_type"] == "optimization_step"]
-        if result["arm"] == "M":
+        if result["arm_base"] == "A":
+            assert proposals
+            for event in proposals:
+                record = event["metadata"]["proposal"]
+                assert record["proposed_instructions"]
+                assert record["accepted"] is False
+                assert record["parent_scores"] is not None
+            assert stats["critic_lm_calls"] == 0
+        if result["arm_base"] == "M":
             assert len(proposals) == len(result["arm_stats"]["proposer_log"])
             assert proposals
             for event in proposals:
                 debate = event["metadata"]["debate"]
-                assert debate["policy"] == "majority"
+                assert debate["policy"] == "half_no_regress"
                 assert debate["received_view_survived"]
                 assert debate["role_calls"]["defender"] == 1
                 assert debate["calls_consumed"] == sum(debate["role_calls"].values())
@@ -118,7 +127,7 @@ def test_all_three_arms_complete_and_account_for_test_evaluation(tiny_run):
                 millian = debate["millian"]["evidence"]
                 assert [(row["question"], row["role"], row["parent_score"]) for row in prosecution] == [
                     (row["question"], row["role"], row["parent_score"]) for row in millian]
-        if result["arm"] == "B":
+        if result["arm_base"] == "B":
             assert result["survival_policy"] == "majority"
             assert len(proposals) == len(result["arm_stats"]["proposer_log"])
             assert all(not event["step"]["decision"]["accepted"] for event in proposals)
@@ -133,7 +142,7 @@ def test_arm_patterns_differ_on_same_seed_and_data(tiny_run):
     assert len(b["critic"].history) > 0
     assert any("refutations" in str(entry["messages"]) for entry in b["critic"].history)
     assert results[1]["survival_policy"] == "majority"
-    assert results[2]["survival_policy"] == "majority"
+    assert results[2]["survival_policy"] == "half_no_regress"
     assert any("rebuttals" in str(entry["messages"]) for entry in m["critic"].history)
     assert not any("rebuttals" in str(entry["messages"]) for entry in b["critic"].history)
     assert results[1]["arm_stats"]["proposer_log"]

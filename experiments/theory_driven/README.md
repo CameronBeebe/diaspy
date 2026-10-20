@@ -28,14 +28,15 @@ calls are part of the offline checks. Live runs execute the canary before the ar
 first successful canary establishes a baseline. Provider failures block the
 stage, while `allow_canary_drift` controls reference drift only. OpenRouter
 reasoning uses `{"enabled": false}`; provider pinning is unchanged. The shared
-provider guard retries HTTP 429 twice (1s/2s backoff), never retries 400/401/404,
+provider guard retries HTTP 429 up to five times (2s exponential backoff plus
+jitter, capped at 60s; longer Retry-After hints are honored), never retries 400/401/404,
 and never changes models. DSPy retries are disabled to avoid nested retries.
 Any failed arm stops the stage with exit code 1; use `set -o pipefail` if piping
 through `tee`. Result JSON points to sanitized compact LM-attempt logs and
 sparse epistemic events (B decisions mean survival admission, not GEPA's final
 acceptance; M records both rival rewrites and the winning proposal). Canary artifacts are under `results/canaries/`.
 
-Each run has a shared 50-call optimization budget across task, reflection and
+Each run has a shared 100-call optimization budget across task, reflection and
 critic histories. GEPA checks the stopper between iterations, so one iteration
 may overshoot. Held-out evaluation has a separate 50-task-call allocation;
 reported totals include it and show optimization overshoot separately. The
@@ -43,12 +44,24 @@ $1 stage safety cap uses costs present in LM histories; absent provider costs
 count as zero, not as independently verified billing. LM caching is disabled.
 Adaptive role counts are shown as shared ranges, not exact predictions.
 
-B and M default to `strict` admission; stage 0 selects `majority` with at least
-three survival questions when available. Corroboration and admission use observed
+B and M default to `strict`; stage 0 compares `A`, `B@half_no_regress`,
+`M@half_no_regress`, and `B@majority`. Non-vacuous survival checks target a
+minimum of three questions; thin sets are reported rather than fabricated. Corroboration and admission use observed
 parent/rewrite F1, not self-reported severity. `veto` adds archive protection.
 `severity_tau` is a deprecated explicit legacy-filter opt-in, not a stage default.
 M tests prosecution and dialectical rewrites on the same set; score gain then
 instruction length breaks ties. Stances steer prompts, not mechanical decisions.
+
+Retry rewrites receive typed failed-attempt scores; duplicate instructions skip
+survival rollouts. Zero-reference checks are marked vacuous and do not vote.
+Arm A events retain full instructions and actual GEPA candidate-pool decisions.
+
+Use `--resume experiments/theory_driven/results` with `--confirm` to skip
+completed matching arm/config hashes; the canary still runs. Skipped results
+retain their original costs against the stage cap. Results are git-ignored.
+`OPENROUTER_ALLOW_FALLBACKS=true` and comma-separated `OPENROUTER_PROVIDER_ORDER`
+configure same-model provider routing, never another model. The preflight cost
+estimate is assumption-based, not a live quote or guaranteed billing bound.
 
 Only stage 0 is runnable here; pilot arms/benchmarks and statistical analyses
 are not validated for real experiments.
