@@ -104,8 +104,18 @@ class ExperimentHarness:
                    survival_policy: str | None = None,
                    min_survival_questions: int | None = None,
                    held_out_regression_samples: int = 0,
-                   config_hash: str | None = None) -> dict[str, Any]:
-        runtime = ProviderRuntime(full_prompt_log=True)
+                   config_hash: str | None = None,
+                   max_retries: int = 10,
+                   backoff_seconds: float = 2.0,
+                   max_delay_seconds: float = 120.0,
+                   max_retry_wall_seconds: float = 900.0) -> dict[str, Any]:
+        runtime = ProviderRuntime(
+            full_prompt_log=True,
+            max_retries=max_retries,
+            backoff_seconds=backoff_seconds,
+            max_delay_seconds=max_delay_seconds,
+            max_retry_wall_seconds=max_retry_wall_seconds,
+        )
         base_name, variant_policy = parse_arm_variant(arm_name)
         survival_policy = variant_policy or survival_policy
         arm_config = next((a for a in self.config.arms + self.config.full_grid_arms
@@ -214,14 +224,19 @@ class ExperimentHarness:
                 f"{result['timestamp'].replace(':', '-')}.json")
         (self.results_dir / name).write_text(json.dumps(result, indent=2))
 
-    def _canary_lms(self, config: ModelConfig, seed: int):
-        runtime = ProviderRuntime()
+    def _canary_lms(self, config: ModelConfig, seed: int, stage: StageConfig):
+        runtime = ProviderRuntime(
+            max_retries=stage.max_retries,
+            backoff_seconds=stage.backoff_seconds,
+            max_delay_seconds=stage.max_delay_seconds,
+            max_retry_wall_seconds=stage.max_retry_wall_seconds,
+        )
         return {role: runtime.wrap(lm, "canary" if role == "task" else role)
                 for role, lm in self.lm_factory(config, seed).items()}
 
     def run_stage(self, stage: StageConfig, resume_dir: str | Path | None = None) -> list[dict[str, Any]]:
         results = []
-        self.canary = run_stage_canary(self.config, stage, self._canary_lms)
+        self.canary = run_stage_canary(self.config, stage, lambda cfg, s: self._canary_lms(cfg, s, stage))
         if not self.canary["passed"]:
             raise RuntimeError(f"Stage canary failed: {self.canary['message']}")
         cost = self.canary["total_cost"]
@@ -258,7 +273,11 @@ class ExperimentHarness:
                                      survival_policy=stage.survival_policy,
                                      min_survival_questions=stage.min_survival_questions,
                                      held_out_regression_samples=stage.held_out_regression_samples,
-                                     config_hash=config_hash)
+                                     config_hash=config_hash,
+                                     max_retries=stage.max_retries,
+                                     backoff_seconds=stage.backoff_seconds,
+                                     max_delay_seconds=stage.max_delay_seconds,
+                                     max_retry_wall_seconds=stage.max_retry_wall_seconds)
             results.append(result)
             cost += result["budget_stats"]["total_cost"]
             if cost > stage.max_cost_dollars:

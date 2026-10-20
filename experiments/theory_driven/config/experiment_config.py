@@ -175,6 +175,12 @@ class StageConfig:
     survival_policy: str = "strict"
     min_survival_questions: int = 3
     held_out_regression_samples: int = 0  # Number of held-out trainset questions for regression checks
+    
+    # Provider retry configuration (429 tolerance)
+    max_retries: int = 10
+    backoff_seconds: float = 2.0
+    max_delay_seconds: float = 120.0
+    max_retry_wall_seconds: float = 900.0  # 15 minutes total retry time per call
 
 
 @dataclass

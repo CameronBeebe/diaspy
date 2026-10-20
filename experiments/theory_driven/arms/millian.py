@@ -317,10 +317,14 @@ class MillianProposer:
                 role_calls=calls, role_costs=costs, calls_consumed=sum(calls.values()),
                 cost_consumed=sum(costs.values()), survived=winner is not None, new_instruction=out[name],
                 tested_questions=[item.question for item in evidence if not item.role.startswith("uncorroborated")],
+                returned_unchanged_parent=winner is None,
             ).model_dump(mode="json")
             self.log.append(record)
             if self.event_sink is not None:
                 self.event_sink(record)
+            if winner is None:
+                # Return {} to skip GEPA re-scoring when received view survived
+                del out[name]
         return out
 
 

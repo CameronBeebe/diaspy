@@ -229,7 +229,7 @@ class PopperianProposer:
                 self.log.append(record)
                 if self.event_sink is not None:
                     self.event_sink(record)
-                out[name] = candidate[name]
+                # Return {} to skip GEPA re-scoring
                 continue
             # Rewrite attempts
             new = candidate[name]
@@ -289,13 +289,10 @@ class PopperianProposer:
                 failed_attempts.append(FailedAttempt.from_evidence(
                     new, self.last_evidence, self.last_rationale["reason"], self.evaluator.eps))
             
-            # Return new instruction if it survived, otherwise return old instruction
-            # Explicitly log when returning parent unchanged
+            # Return new instruction if it survived; otherwise skip re-scoring with {}
             if ok:
                 out[name] = new
-            else:
-                # Log that we're returning the parent unchanged, which GEPA will re-score
-                out[name] = candidate[name]
+            # No else: returning {} is implicit when not setting out[name]
         
         return out
 
