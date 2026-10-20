@@ -22,7 +22,7 @@ class ModelConfig:
     # Reasoning control (OpenRouter's reasoning parameter)
     # For Qwen3.5: set to False to disable thinking/reasoning tokens
     enable_reasoning: bool = False
-    provider_allow_fallbacks: bool = False
+    provider_allow_fallbacks: bool | None = None  # None = use stage default, True/False = explicit
     provider_order: List[str] = field(default_factory=list)
     
     # Alternative models
