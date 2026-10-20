@@ -355,6 +355,7 @@ class ExperimentConfig:
                 run_canary=True,
                 canary_model=smoke_model,
                 allow_canary_drift=False,  # Block on drift (error should fail the stage)
+                provider_allow_fallbacks=True,  # Enable same-model fallback for stage 0
             )
         elif stage_id == 1:
             return StageConfig(
