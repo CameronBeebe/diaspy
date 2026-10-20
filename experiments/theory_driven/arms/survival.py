@@ -214,7 +214,10 @@ class SurvivalEvaluator:
                                          citations.get(question, [])))
                 if role == "defense":
                     included.add(question)
-        # Held-out regression: deterministic samples from trainset, not in minibatch
+        # Held-out regression: deterministic samples from trainset.
+        # These are pre-sampled at init and deduplicated against cited questions here.
+        # They may overlap with the current GEPA minibatch (which is only known at runtime),
+        # but are excluded if cited as counterexamples/defense/archive.
         for question in self._held_out_questions:
             if question in included:
                 continue

@@ -11,7 +11,22 @@ from experiments.theory_driven.config import ExperimentConfig, StageConfig
 from experiments.theory_driven.config.variants import parse_arm_variant
 
 
-_CODE_VERSION = "pr6-stage0-reliability"
+import subprocess
+
+
+def _get_git_version() -> str:
+    """Return current git SHA, or 'unknown' if not in a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=5
+        )
+        return result.stdout.strip()[:12]  # Short SHA
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return "unknown"
+
+
+_CODE_VERSION = _get_git_version()
 
 
 def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
@@ -69,8 +84,9 @@ def completed_result(directory: Path, benchmark: str, variant: str, budget: int,
 
 def any_result_cost(directory: Path, benchmark: str, variant: str, budget: int,
                     seed: int, config_hash: str) -> float:
-    """Return the cost from any run (success, error, or aborted) that matches the config."""
-    for path in sorted(directory.glob("*.json"), reverse=True):
+    """Sum cost across all matching result files (including aborted runs), not just the latest."""
+    total_cost = 0.0
+    for path in directory.glob("*.json"):
         try:
             row = json.loads(path.read_text())
         except (OSError, ValueError):
@@ -83,8 +99,8 @@ def any_result_cost(directory: Path, benchmark: str, variant: str, budget: int,
         stats = row.get("budget_stats")
         cost = stats.get("total_cost") if isinstance(stats, dict) else None
         if _finite_number(cost) and cost >= 0:
-            return cost
-    return 0.0
+            total_cost += cost
+    return total_cost
 
 
 def _finite_number(value: Any) -> TypeGuard[int | float]:
