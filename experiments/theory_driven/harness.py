@@ -200,7 +200,8 @@ class ExperimentHarness:
                      optimization_overshoot=max(0, optimization_calls - budget),
                      test_calls=tracker.used_calls() - optimization_calls,
                      cost_overshoot=max(0.0, tracker.used_usd() - cost_cap),
-                     provider_failed=runtime.failed)
+                     provider_failed=runtime.failed,
+                     provider_retries=runtime.retry_summary())
         runtime.write_jsonl(self.results_dir / call_path)
         artifacts = trace.finalize({"status": status, "message": message, "budget_stats": stats})
         result = {"benchmark": benchmark_name, "arm": arm_name, "budget": budget, "seed": seed,

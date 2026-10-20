@@ -91,6 +91,7 @@ def run_stage_canary(
         result["artifacts"]["reference"] = str(suite.get_reference_file(model).relative_to(root))
     runtime = getattr(lm, "runtime", None)
     if runtime is not None:
+        result["provider_retries"] = runtime.retry_summary()
         calls_path = directory / f"{run_id}_lm_calls.jsonl"
         runtime.write_jsonl(calls_path)
         result["artifacts"]["lm_calls"] = str(calls_path.relative_to(root))
