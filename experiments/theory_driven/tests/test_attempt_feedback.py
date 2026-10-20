@@ -135,7 +135,7 @@ def test_real_hotpot_reflective_answer_short_circuits_without_numeric_feedback(a
     proposer = cls(HotpotQAProgram(), hotpotqa_metric, {gold.question: gold}, reflection, task, budget)
     batch = {"answer": [{"Inputs": {"question": gold.question, "context": ""},
                          "Generated Outputs": {"answer": "Paris"}, "Feedback": "Correct"}]}
-    assert proposer({"answer": "parent"}, batch, ["answer"]) == {"answer": "parent"}
+    assert proposer({"answer": "parent"}, batch, ["answer"]) == {}  # Returns {} with no numeric feedback
     assert not task.history
     assert budget.used_calls() == (1 if arm == "B" else 2)
     assert proposer.log[-1]["calls_consumed"] == 0
