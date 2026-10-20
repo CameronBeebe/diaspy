@@ -60,8 +60,13 @@ class PreFlightGate:
             "optimization_call_cap": optimization,
             "proposer_calls_per_attempt": {a: {"A": 1, "B": 2, "C": 2, "M": 4}.get(parse_arm_variant(a)[0])
                                            for a in stage.arms},
-            "survival_policy": stage.survival_policy,
+            "per_variant_policies": {
+                a: parse_arm_variant(a)[1] or stage.survival_policy
+                for a in stage.arms
+                if not a.startswith("A")  # Arm A has no proposer/evaluator, skip policy
+            },
             "min_survival_questions": stage.min_survival_questions,
+            "held_out_regression_samples": stage.held_out_regression_samples,
             "test_calls": test_calls,
             "canary_calls": canary_calls,
             "roles": {

@@ -11,6 +11,24 @@ from experiments.theory_driven.config import ExperimentConfig, StageConfig
 from experiments.theory_driven.config.variants import parse_arm_variant
 
 
+import subprocess
+
+
+def _get_git_version() -> str:
+    """Return current git SHA, or 'unknown' if not in a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=5
+        )
+        return result.stdout.strip()[:12]  # Short SHA
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return "unknown"
+
+
+_CODE_VERSION = _get_git_version()
+
+
 def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
                 variant: str, budget: int, seed: int) -> str:
     base, policy = parse_arm_variant(variant)
@@ -27,12 +45,14 @@ def fingerprint(config: ExperimentConfig, stage: StageConfig, benchmark: str,
             return {"lm_model": value.model, "kwargs": safe(value.kwargs)}
         raise ValueError("Resume requires serializable arm configuration")
     benchmark_config = next((b for b in config.benchmarks if b.name == benchmark), None)
-    payload = {"version": 1, "dspy": metadata.version("dspy"), "gepa": metadata.version("gepa"),
+    payload = {"version": 2, "code_version": _CODE_VERSION,
+               "dspy": metadata.version("dspy"), "gepa": metadata.version("gepa"),
                "model": safe(asdict(config.model_config)), "benchmark": benchmark,
                "benchmark_options": safe(asdict(benchmark_config)) if benchmark_config else {},
                "train_size": config.train_size, "val_size": config.val_size, "test_size": stage.test_size,
                "arm": variant, "arm_type": arm.arm_type, "arm_options": safe(arm.kwargs),
                "policy": policy or stage.survival_policy, "minimum": stage.min_survival_questions,
+               "held_out_regression_samples": stage.held_out_regression_samples,
                "budget": budget, "seed": seed, "stage_cap": stage.max_cost_dollars,
                "canary": {"model": stage.canary_model, "enabled": stage.run_canary,
                           "allow_drift": stage.allow_canary_drift}}
@@ -61,6 +81,27 @@ def completed_result(directory: Path, benchmark: str, variant: str, budget: int,
                 and _finite_number(cost) and cost >= 0):
             return {**row, "resumed_from": str(path.resolve())}
     return None
+
+
+def any_result_cost(directory: Path, benchmark: str, variant: str, budget: int,
+                    seed: int, config_hash: str) -> float:
+    """Sum cost across all matching result files (including aborted runs), not just the latest."""
+    total_cost = 0.0
+    for path in directory.glob("*.json"):
+        try:
+            row = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        if (row.get("benchmark"), row.get("arm"), row.get("budget"), row.get("seed"), row.get("config_hash")) != (
+                benchmark, variant, budget, seed, config_hash):
+            continue
+        stats = row.get("budget_stats")
+        cost = stats.get("total_cost") if isinstance(stats, dict) else None
+        if _finite_number(cost) and cost >= 0:
+            total_cost += cost
+    return total_cost
 
 
 def _finite_number(value: Any) -> TypeGuard[int | float]:

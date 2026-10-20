@@ -57,9 +57,13 @@ class FailedAttempt(pydantic.BaseModel):
         rows = []
         for row in evidence:
             reference = row.parent_score if row.reference_score is None else row.reference_score
+            # Skip vacuous checks entirely (neither fixed nor kept, just no observation)
+            if row.vacuous:
+                continue
+            # Include held_out_regression in keepable roles, and handle vacuous checks properly
             passed = row.rewrite_score is not None and (
                 row.rewrite_score > row.parent_score + eps if row.role == "counterexample"
-                else row.role in {"regression", "archive", "defense"} and not row.vacuous
+                else row.role in {"regression", "archive", "defense", "held_out_regression"}
                 and row.rewrite_score >= reference - eps)
             rows.append(AttemptQuestion(question_id=row.question, role=row.role,
                                         parent_score=row.parent_score, rewrite_score=row.rewrite_score,
@@ -100,6 +104,9 @@ class PopperianProposer:
         survival_policy: str | AdmissionPolicy = "strict",
         min_survival_questions: int = 3,
         eps: float = 0.0,
+        held_out_regression_samples: int = 0,
+        trainset: list | None = None,
+        seed: int = 0,
     ):
         """Initialize Popperian proposer.
         
@@ -114,6 +121,9 @@ class PopperianProposer:
             severity_tau: Deprecated explicit legacy citation filter (default: disabled)
             archive_cap: Maximum archive size
             event_sink: Immediate survival-admission event callback (not GEPA acceptance)
+            held_out_regression_samples: Number of held-out trainset questions for regression checks
+            trainset: Training examples (required if held_out_regression_samples > 0)
+            seed: Random seed for deterministic held-out sampling
         """
         self.program = program
         self.metric = metric
@@ -125,7 +135,7 @@ class PopperianProposer:
         self.policy = get_policy(survival_policy, eps)
         self.evaluator = SurvivalEvaluator(
             program, metric, gold_by_question, task_lm, min_survival_questions,
-            severity_tau, archive_cap, eps)
+            severity_tau, archive_cap, eps, held_out_regression_samples, trainset, seed)
         self.last_evidence: list[Evidence] = []
         self.last_rationale: dict[str, Any] = {}
         self.event_sink = event_sink
@@ -218,11 +228,12 @@ class PopperianProposer:
                     "critique_calls_consumed": critique_calls, "critique_cost_consumed": critique_cost,
                     "parent_calls_consumed": self.budget_tracker.total_units - parent_before,
                     "parent_cost_consumed": self.budget_tracker.total_cost - parent_cost_before,
+                    "returned_unchanged_parent": True,
                 }
                 self.log.append(record)
                 if self.event_sink is not None:
                     self.event_sink(record)
-                out[name] = candidate[name]
+                # Return {} to skip GEPA re-scoring
                 continue
             # Rewrite attempts
             new = candidate[name]
@@ -270,6 +281,8 @@ class PopperianProposer:
                     "new_instruction": new,
                     "calls_consumed": self.budget_tracker.total_units - calls_before,
                     "cost_consumed": self.budget_tracker.total_cost - cost_before,
+                    # Only the final failed attempt of a round with no admitted rewrite returns the parent.
+                    "returned_unchanged_parent": not ok and attempt == self.max_attempts,
                 }
                 self.log.append(record)
                 if self.event_sink is not None:
@@ -282,13 +295,9 @@ class PopperianProposer:
                 failed_attempts.append(FailedAttempt.from_evidence(
                     new, self.last_evidence, self.last_rationale["reason"], self.evaluator.eps))
             
-            # Return new instruction if it survived, otherwise return old instruction
-            # This rejects failing rewrites immediately instead of letting GEPA test them
+            # Return new instruction if it survived; otherwise skip re-scoring with {}
             if ok:
                 out[name] = new
-            else:
-                # Keep parent instruction - reject the failing rewrite
-                out[name] = candidate[name]
         
         return out
 
@@ -311,6 +320,7 @@ class PopperianArm(BaseArm):
         survival_policy: str | AdmissionPolicy = "strict",
         min_survival_questions: int = 3,
         eps: float = 0.0,
+        held_out_regression_samples: int = 0,
         **kwargs
     ):
         """Initialize Popperian arm."""
@@ -326,6 +336,7 @@ class PopperianArm(BaseArm):
         self.survival_policy = self.policy.name
         self.min_survival_questions = min_survival_questions
         self.eps = eps
+        self.held_out_regression_samples = held_out_regression_samples
         self.proposer: Optional[PopperianProposer] = None
     
     def compile(
@@ -376,6 +387,9 @@ class PopperianArm(BaseArm):
             survival_policy=self.policy,
             min_survival_questions=self.min_survival_questions,
             eps=self.eps,
+            held_out_regression_samples=self.held_out_regression_samples,
+            trainset=trainset,
+            seed=self.seed,
         )
         
         # Create GEPA with custom proposer

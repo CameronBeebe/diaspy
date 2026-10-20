@@ -22,7 +22,7 @@ class ModelConfig:
     # Reasoning control (OpenRouter's reasoning parameter)
     # For Qwen3.5: set to False to disable thinking/reasoning tokens
     enable_reasoning: bool = False
-    provider_allow_fallbacks: bool = False
+    provider_allow_fallbacks: Optional[bool] = None  # None = use stage default, True/False = explicit
     provider_order: List[str] = field(default_factory=list)
     
     # Alternative models
@@ -104,9 +104,11 @@ class ModelConfig:
         # OpenRouter provider pinning
         if "openrouter/" in model and pin_provider:
             provider_config: Dict[str, Any] = {
-                "allow_fallbacks": self.provider_allow_fallbacks,  # Same-model providers only
                 "require_parameters": True,  # Require our params to be respected
             }
+            # Only include allow_fallbacks if explicitly set (not None)
+            if self.provider_allow_fallbacks is not None:
+                provider_config["allow_fallbacks"] = self.provider_allow_fallbacks
             
             if provider_name:
                 # Pin to specific provider
@@ -174,6 +176,16 @@ class StageConfig:
     allow_canary_drift: bool = False  # If False, stage blocks on drift detection
     survival_policy: str = "strict"
     min_survival_questions: int = 3
+    held_out_regression_samples: int = 0  # Number of held-out trainset questions for regression checks
+    
+    # Provider retry configuration (429 tolerance)
+    max_retries: int = 10
+    backoff_seconds: float = 2.0
+    max_delay_seconds: float = 120.0
+    max_retry_wall_seconds: float = 900.0  # 15 minutes total retry time per call
+    
+    # Provider fallback configuration
+    provider_allow_fallbacks: Optional[bool] = None  # None = use model config default, True/False = override
 
 
 @dataclass
@@ -334,6 +346,7 @@ class ExperimentConfig:
                 arms=["A", "B@half_no_regress", "M@half_no_regress", "B@majority"],
                 survival_policy="majority",
                 min_survival_questions=3,
+                held_out_regression_samples=2,
                 models=[smoke_model],
                 requires_stage_gate=True,
                 required_checks=[
@@ -347,6 +360,7 @@ class ExperimentConfig:
                 run_canary=True,
                 canary_model=smoke_model,
                 allow_canary_drift=False,  # Block on drift (error should fail the stage)
+                provider_allow_fallbacks=True,  # Enable same-model fallback for stage 0
             )
         elif stage_id == 1:
             return StageConfig(

@@ -140,13 +140,13 @@ def test_defense_uses_observed_median_and_archive_keeps_original_reference():
     parent = {"answer": "parent"}
     batch = [{"Inputs": {"question": q}} for q in ("c", "r", "z")]
     evidence = evaluator.prepare(parent, refs, batch, protected_ids=[0, 1, 2, -1, 30])
+    # With deduplication: "c" appears only once as counterexample (higher precedence)
     assert [(e.question, e.role) for e in evidence] == [
-        ("c", "counterexample"), ("c", "uncorroborated_defense"),
-        ("r", "defense"), ("z", "defense"), ("a", "archive")]
+        ("c", "counterexample"), ("r", "defense"), ("z", "defense"), ("a", "archive")]
     archived = evidence[-1]
     assert (archived.parent_score, archived.reference_score) == (0.4, 0.9)
     evaluated = evaluator.evaluate(parent, "answer", "rewrite", evidence)
-    assert len(lm.history) == 8
+    assert len(lm.history) == 8  # 4 prepare + 4 evaluate
     assert survival_module().get_policy("veto")(evaluated)[0] is False
     assert evaluator.archive == {"a": 0.9}
 

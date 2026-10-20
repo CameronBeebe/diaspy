@@ -27,8 +27,11 @@ class Evidence:
     vacuous: bool = field(init=False)
 
     def __post_init__(self) -> None:
+        # A no-regression check is vacuous iff its reference score is 0: it cannot regress.
+        # Archive rows compare against their historical reference_score; others against parent.
         reference = self.parent_score if self.reference_score is None else self.reference_score
-        self.vacuous = self.role in {"regression", "archive", "defense"} and reference == 0
+        self.vacuous = (self.role in {"regression", "archive", "defense", "held_out_regression"}
+                        and reference == 0)
 
 
 class AdmissionPolicy(Protocol):
@@ -52,7 +55,7 @@ class ScorePolicy:
                     for e in counterexamples)
         regressions: dict[str, list[Evidence]] = {}
         for row in evidence:
-            if row.role in {"regression", "archive", "defense"} and not row.vacuous:
+            if row.role in {"regression", "archive", "defense", "held_out_regression"} and not row.vacuous:
                 regressions.setdefault(row.question, []).append(row)
 
         def kept(e: Evidence) -> bool:
@@ -97,7 +100,8 @@ class SurvivalEvaluator:
     def __init__(self, program: dspy.Module, metric: Callable,
                  gold_by_question: dict[str, Any], task_lm: BaseLM,
                  min_survival_questions: int = 3, severity_tau: float | None = None,
-                 archive_cap: int = 6, eps: float = 0.0):
+                 archive_cap: int = 6, eps: float = 0.0, held_out_regression_samples: int = 0,
+                 trainset: list | None = None, seed: int = 0):
         self.program = program
         self.metric = metric
         self.gold = gold_by_question
@@ -108,6 +112,15 @@ class SurvivalEvaluator:
         self.eps = eps
         self.archive: dict[str, float] = {}
         self.last_metadata: dict[str, Any] = {}
+        self.held_out_regression_samples = held_out_regression_samples
+        self._held_out_questions: list[str] = []
+        if held_out_regression_samples > 0 and trainset:
+            # Deterministic sampling based on seed
+            import random
+            rng = random.Random(seed)
+            available = [ex for ex in trainset]
+            rng.shuffle(available)
+            self._held_out_questions = [ex.question for ex in available[:held_out_regression_samples]]
         if severity_tau is not None:
             logging.getLogger(__name__).warning(
                 "severity_tau is deprecated: explicit legacy filtering is enabled")
@@ -159,10 +172,17 @@ class SurvivalEvaluator:
     def prepare(self, candidate: dict[str, str], refutations: list, batch: list,
                 protected_ids: list[int] | None = None,
                 parent_scores: dict[str, float] | None = None) -> list[Evidence]:
-        """Observe the full parent minibatch; preserve dropped citations for tracing."""
+        """Observe the full parent minibatch; preserve dropped citations for tracing.
+        
+        Primary roles follow counterexample > defense > held_out_regression
+        precedence. Archive constraints are retained independently; policies
+        group overlapping regression constraints into one vote per question.
+        """
         questions = [example["Inputs"]["question"] for example in batch]
+        # Include held-out questions in the scores to compute
+        all_questions = [*questions, *self.archive, *self._held_out_questions]
         scores = dict(parent_scores or {})
-        scores.update(self._scores(candidate, [q for q in [*questions, *self.archive] if q not in scores]))
+        scores.update(self._scores(candidate, [q for q in all_questions if q not in scores]))
         citations: dict[str, list[dict[str, Any]]] = {}
         for refutation in refutations:
             ref = refutation.model_dump() if hasattr(refutation, "model_dump") else dict(refutation)
@@ -175,6 +195,7 @@ class SurvivalEvaluator:
                         refs.append(ref)
         evidence = []
         included: set[str] = set()
+        # Counterexamples have highest precedence
         for question in dict.fromkeys(questions):
             if question not in citations:
                 continue
@@ -182,19 +203,31 @@ class SurvivalEvaluator:
             evidence.append(Evidence(question, role, scores[question], None, citations[question]))
             if role == "counterexample":
                 included.add(question)
+        # Defense: skip questions already included as counterexamples
         if questions and protected_ids:
             threshold = median(scores[q] for q in questions)
             for i in sorted(set(protected_ids)):
                 if not 0 <= i < len(questions):
                     continue
                 question = questions[i]
+                if question in included:
+                    continue
                 role = ("defense" if scores[question] > 0 and scores[question] >= threshold
                         else "uncorroborated_defense")
                 evidence.append(Evidence(question, role, scores[question], None,
                                          citations.get(question, [])))
                 if role == "defense":
                     included.add(question)
-        # Keep an archive row even if also cited: its historical reference is distinct.
+        # Held-out regression: deterministic samples from trainset.
+        # These are pre-sampled at init and deduplicated against cited questions here.
+        # They may overlap with the current GEPA minibatch (which is only known at runtime),
+        # but are excluded if cited as counterexamples/defense.
+        for question in self._held_out_questions:
+            if question in included:
+                continue
+            evidence.append(Evidence(question, "held_out_regression", scores[question], None, []))
+            included.add(question)
+        # Archive references constrain even questions with another active role.
         for question, reference in self.archive.items():
             evidence.append(Evidence(question, "archive", scores[question], None,
                                      citations.get(question, []), reference))
@@ -203,6 +236,7 @@ class SurvivalEvaluator:
             return len({e.question for e in evidence if not e.vacuous
                         and not e.role.startswith("uncorroborated")})
 
+        # Padding regression: skip questions already included
         for question in sorted(dict.fromkeys(questions), key=lambda q: scores[q] <= 0):
             if non_vacuous_count() >= self.min_survival_questions:
                 break
@@ -211,7 +245,8 @@ class SurvivalEvaluator:
                                          citations.get(question, [])))
                 included.add(question)
         self.last_metadata = {"thin_survival_set": non_vacuous_count() < self.min_survival_questions,
-                              "non_vacuous_questions": non_vacuous_count()}
+                              "non_vacuous_questions": non_vacuous_count(),
+                              "held_out_regression_count": len([e for e in evidence if e.role == "held_out_regression"])}
         if self.last_metadata["thin_survival_set"]:
             logging.getLogger(__name__).warning("thin_survival_set: %s", self.last_metadata)
         return evidence
@@ -219,7 +254,7 @@ class SurvivalEvaluator:
     def evaluate(self, candidate: dict[str, str], predictor_name: str, instruction: str,
                  evidence: list[Evidence]) -> list[Evidence]:
         """Return fresh evidence; never short-circuit or mutate the shared joint set."""
-        active = {"counterexample", "archive", "regression", "defense"}
+        active = {"counterexample", "archive", "regression", "defense", "held_out_regression"}
         scores = self._scores({**candidate, predictor_name: instruction},
                               [e.question for e in evidence if e.role in active])
         return [replace(e, rewrite_score=scores[e.question] if e.role in active else None)

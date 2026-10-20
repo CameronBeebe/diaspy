@@ -11,9 +11,9 @@ def test_openrouter_reasoning_is_object(enabled):
     assert isinstance(reasoning, dict)
     assert not isinstance(reasoning, bool)
     assert reasoning["enabled"] is enabled
-    assert kwargs["extra_body"]["provider"] == {
-        "allow_fallbacks": False, "require_parameters": True,
-    }
+    # When provider_allow_fallbacks is None (default), key should be omitted
+    assert "allow_fallbacks" not in kwargs["extra_body"]["provider"]
+    assert kwargs["extra_body"]["provider"] == {"require_parameters": True}
 
 
 def test_provider_fallback_keeps_model_and_order():

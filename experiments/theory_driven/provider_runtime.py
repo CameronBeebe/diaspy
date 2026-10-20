@@ -56,6 +56,36 @@ def provider_status(error: Exception) -> int | None:
     return None
 
 
+# Transport-level failures that look like dropped connections (e.g. a VM snapshot
+# pausing the box mid-request). Matched by exception class name across the
+# cause/context chain, so SDK wrappers (DSPy LM*, LiteLLM, httpx, lm15) all qualify.
+# Local lock timeouts are deliberately absent. A bare HTTP status (e.g. a server
+# 408 or 5xx response object) is not transient by itself.
+TRANSIENT_ERROR_NAMES = frozenset({
+    "LMTimeoutError", "LMTransportError",                      # DSPy
+    "Timeout", "APITimeoutError", "APIConnectionError",        # LiteLLM / OpenAI SDK
+    "TimeoutError", "TransportError",                          # lm15 and builtin TimeoutError
+    "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+    "ConnectError", "ReadError", "WriteError", "RemoteProtocolError",  # httpx/httpcore
+    "ServerDisconnectedError", "ClientConnectionError", "ClientOSError",  # aiohttp
+    "ConnectionError", "ConnectionResetError", "ConnectionAbortedError",
+    "BrokenPipeError", "IncompleteRead", "EOFError", "SSLEOFError", "SSLZeroReturnError",
+})
+
+
+def transient_kind(error: Exception) -> str | None:
+    """Return the matching transient class name in the error chain, if any."""
+    seen = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for cls in type(current).__mro__:
+            if cls.__name__ in TRANSIENT_ERROR_NAMES:
+                return cls.__name__
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def retry_after_seconds(error: Exception, now: float) -> float | None:
     """Read Retry-After across SDK wrappers; malformed hints are advisory only."""
     seen = set()
@@ -111,27 +141,48 @@ def serving_provider(response) -> str | None:
 class ProviderRuntime:
     """One shared latch across task/reflection/critic, including LM copies.
 
-    Only 429s retry: five retries by default, with 2/4/8/16/32 seconds plus
-    uniform [0, 1) second jitter, capped at 60 seconds. Retry-After is a
-    minimum and may exceed that cap. Inject sleep, random and a UNIX clock
-    for deterministic offline tests; no internal SDK retries are permitted.
+    429s and transient transport failures (timeouts, connection resets/EOF;
+    see TRANSIENT_ERROR_NAMES) retry with exponential backoff under one shared
+    policy; 400/401/404 fail fast, and exhausted retries latch. Each delay is capped at
+    max_delay_seconds, and the total retry wall time is capped at
+    max_retry_wall_seconds, including attempts and waits. HTTP attempt timeouts
+    are bounded by the remaining budget; backends ignoring timeouts cannot be
+    interrupted here, but their late results are rejected. Retry-After is a
+    minimum, also capped at max_delay_seconds. Elapsed time uses a monotonic
+    clock; HTTP dates use UNIX wall time. Inject sleep, random and a single
+    UNIX clock for backward-compatible deterministic offline tests (the injected
+    clock then drives both clocks). No internal SDK retries are permitted.
     """
 
     def __init__(self, *, secrets=(), text_limit: int = 1000,
-                 max_retries: int = 5, backoff_seconds: float = 2.0,
-                 sleep=time.sleep, random=random, clock=time.time):
-        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 0 <= max_retries <= 5:
-            raise ValueError("max_retries must be an integer between 0 and 5")
-        if not 0 <= backoff_seconds <= 60:
-            raise ValueError("backoff_seconds must be between 0 and 60")
+                 max_retries: int = 10, backoff_seconds: float = 2.0,
+                 timeout_seconds: float = 120.0, max_delay_seconds: float = 120.0,
+                 max_retry_wall_seconds: float = 900.0,
+                 sleep=time.sleep, random=random, clock=None, full_prompt_log: bool = False):
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if not 0 <= backoff_seconds <= 3600:
+            raise ValueError("backoff_seconds must be between 0 and 3600")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_delay_seconds <= 0:
+            raise ValueError("max_delay_seconds must be positive")
+        if max_retry_wall_seconds <= 0:
+            raise ValueError("max_retry_wall_seconds must be positive")
         if text_limit < 1:
             raise ValueError("text_limit must be positive")
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
+        self.timeout_seconds = timeout_seconds
+        self.max_delay_seconds = max_delay_seconds
+        self.max_retry_wall_seconds = max_retry_wall_seconds
         self._sleep = sleep
         self._random = random
-        self._clock = clock
+        self._clock = time.time if clock is None else clock
+        # Preserve legacy single-clock injection for deterministic offline tests.
+        self._elapsed_clock = time.monotonic if clock is None else clock
         self.text_limit = text_limit
+        self.full_prompt_log = full_prompt_log
         self._secrets = set(filter(None, secrets))
         self._secrets.update(value for key, value in os.environ.items()
                              if value and any(word in key.upper()
@@ -156,6 +207,10 @@ class ProviderRuntime:
         lm.num_retries = 0
         for key in ("num_retries", "max_retries", "retry_strategy"):
             lm.kwargs.pop(key, None)
+        # Only set timeout for real HTTP providers, not custom engines
+        if isinstance(getattr(lm, "_engine_spec", None), str):
+            lm.kwargs["timeout"] = min(self.timeout_seconds,
+                                       lm.kwargs.get("timeout") or self.timeout_seconds)
         return GuardedLM(lm, self, role)
 
     def sanitize(self, value, *, truncate: bool = True) -> str:
@@ -183,6 +238,20 @@ class ProviderRuntime:
         with self._lock:
             target.write_text("".join(json.dumps(row) + "\n" for row in self.attempts))
 
+    def retry_summary(self) -> dict[str, int]:
+        """Counts over failed attempt rows; each retried row is followed by another attempt."""
+        with self._lock:
+            rows = [row for row in self.attempts if row.get("error") and row.get("role") != "harness"]
+            return {
+                "failed_attempts": len(rows),
+                "rate_limit_errors": sum(row.get("retry_kind") == "rate_limit" for row in rows),
+                "transient_errors": sum(row.get("retry_kind") == "transient" for row in rows),
+                "timeouts": sum("Timeout" in str(row.get("transient_error", "")) for row in rows),
+                "calls_recovered_after_retry": sum(
+                    1 for row in self.attempts
+                    if not row.get("error") and isinstance(row.get("attempt"), int) and row["attempt"] > 1),
+            }
+
     def call(self, lm, role, prompt, messages, kwargs):
         with self._lock:
             self.raise_if_failed()
@@ -190,34 +259,91 @@ class ProviderRuntime:
             self._learn_secrets(kwargs)
             kwargs = {key: value for key, value in kwargs.items()
                       if key not in ("num_retries", "max_retries", "retry_strategy")}
+            # Only set timeout for real HTTP providers, not custom engines
+            if isinstance(getattr(lm, "_engine_spec", None), str):
+                kwargs["timeout"] = min(self.timeout_seconds,
+                                        lm.kwargs.get("timeout") or self.timeout_seconds,
+                                        kwargs.get("timeout") or self.timeout_seconds)
+            full_prompt = self.sanitize(messages if messages is not None else prompt, truncate=False)
             trace = {"role": self.sanitize(role), "model": self.sanitize(lm.model),
                      "prompt": self.sanitize(messages if messages is not None else prompt),
                      "response": "", "usage": {}, "cost": None,
                      "status_code": None, "error": None}
+            if self.full_prompt_log:
+                trace["full_prompt"] = full_prompt
             history_size = len(lm.history)
+            retry_start_time = self._elapsed_clock()
             for attempt in range(self.max_retries + 1):
-                trace = {**trace, "attempt": attempt + 1}
+                # Fresh per-attempt row: never carry a previous attempt's retry labels.
+                trace = {**{key: value for key, value in trace.items()
+                            if key not in ("retry_kind", "transient_error")}, "attempt": attempt + 1}
+                attempt_kwargs = dict(kwargs)
+                remaining = self.max_retry_wall_seconds - (self._elapsed_clock() - retry_start_time)
+                if remaining <= 0:
+                    self.failure = ProviderFailure(self.sanitize(
+                        f"{role} {lm.model}: retry wall time exceeded before attempt {attempt + 1}"))
+                    self.raise_if_failed()
+                if isinstance(getattr(lm, "_engine_spec", None), str):
+                    attempt_kwargs["timeout"] = min(kwargs["timeout"], remaining)
                 try:
-                    result = lm(prompt, messages=messages, **kwargs)
+                    result = lm(prompt, messages=messages, **attempt_kwargs)
+                    # A backend may ignore its timeout; never accept a late success.
+                    if self._elapsed_clock() - retry_start_time >= self.max_retry_wall_seconds:
+                        raise TimeoutError("retry wall time exceeded during provider call")
                     trace.update(status_code=None, error=None)
                     break
                 except Exception as error:
                     status = provider_status(error)
                     trace.update(status_code=status, error=self.sanitize(error))
+                    # 400/401/404 fail fast even if the SDK wraps them in a transport class.
+                    kind = None if status in (400, 401, 404) else (
+                        "rate_limit" if status == 429 else "transient" if transient_kind(error) else None)
+                    if kind is not None:
+                        trace["retry_kind"] = kind
+                        if kind == "transient":
+                            trace["transient_error"] = transient_kind(error)
                     self.attempts.append(trace)
-                    if status == 429 and attempt < self.max_retries:
-                        delay = min(self.backoff_seconds * 2 ** attempt + self._random(), 60.0)
-                        # Cap our backoff, not the server's minimum wait.
+                    if kind is not None and attempt < self.max_retries:
+                        # 429 and transient transport failures share one bounded policy:
+                        # same attempt counter, per-wait cap and per-call total wall cap.
+                        elapsed = self._elapsed_clock() - retry_start_time
+                        if elapsed >= self.max_retry_wall_seconds:
+                            self.failure = ProviderFailure(
+                                self.sanitize(f"{role} {lm.model}: retry wall time exceeded ({elapsed:.1f}s)"))
+                            self.raise_if_failed()
+
+                        # Calculate delay with exponential backoff and jitter
+                        delay = self.backoff_seconds * 2 ** attempt + self._random()
+                        # Cap the delay
+                        delay = min(delay, self.max_delay_seconds)
+                        # Retry-After is also capped at max_delay_seconds
                         retry_after = retry_after_seconds(error, self._clock())
-                        self._sleep(max(delay, retry_after or 0.0))
+                        if retry_after is not None:
+                            retry_after = min(retry_after, self.max_delay_seconds)
+                        actual_delay = max(delay, retry_after or 0.0)
+
+                        # Check if sleeping would exceed wall time
+                        if elapsed + actual_delay >= self.max_retry_wall_seconds:
+                            remaining = self.max_retry_wall_seconds - elapsed
+                            if remaining > 0:
+                                self._sleep(remaining)
+                            self.failure = ProviderFailure(
+                                self.sanitize(f"{role} {lm.model}: retry wall time exceeded after {attempt + 1} attempts"))
+                            self.raise_if_failed()
+
+                        self._sleep(actual_delay)
                         continue
-                    if status in (400, 401, 404, 429):
+                    if status in (400, 401, 404, 429) or kind == "transient":
+                        # Exhausted transient retries latch like an exhausted 429: the
+                        # run aborts instead of GEPA silently scoring the call as 0.
                         self.failure = ProviderFailure(self.sanitize(f"{role} {lm.model}: {error}"))
                         self.raise_if_failed()
                     raise
             else:
                 raise ValueError("max_retries must be nonnegative")
             trace["response"] = self.sanitize(result)
+            if self.full_prompt_log:
+                trace["full_response"] = self.sanitize(result, truncate=False)
             if len(lm.history) > history_size:
                 entry = lm.history[-1]
                 provider = serving_provider(entry.get("response"))

@@ -35,7 +35,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirm", action="store_true", help="Explicitly allow model/network execution")
     args = parser.parse_args(argv)
     config = ExperimentConfig()
-    config.model_config.provider_allow_fallbacks = os.getenv("OPENROUTER_ALLOW_FALLBACKS", "false").lower() == "true"
+    stage_config = config.get_stage_config(args.stage)
+    
+    # Provider fallback: env var > stage config > model config default
+    env_allow_fallbacks = os.getenv("OPENROUTER_ALLOW_FALLBACKS")
+    if env_allow_fallbacks is not None:
+        # Env var explicitly set: use it (overrides stage config and model config)
+        config.model_config.provider_allow_fallbacks = env_allow_fallbacks.lower() in ("true", "1", "yes")
+    elif stage_config.provider_allow_fallbacks is not None:
+        # Stage config explicitly set: use it (overrides model config default)
+        config.model_config.provider_allow_fallbacks = stage_config.provider_allow_fallbacks
+    # else: use model config default (None or False)
+    
     config.model_config.provider_order = [p.strip() for p in os.getenv("OPENROUTER_PROVIDER_ORDER", "").split(",") if p.strip()]
     if args.resume is not None:
         config.results_dir = str(args.resume)
