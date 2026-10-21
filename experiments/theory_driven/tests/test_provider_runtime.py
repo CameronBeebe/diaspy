@@ -340,6 +340,56 @@ def test_real_predictor_and_optimizer_copy_share_guard_and_history():
     assert len(runtime.attempts) == 2
 
 
+@pytest.mark.parametrize("kind", ["dummy", "custom", "legacy"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_guarded_adapter_capabilities_preserve_underlying_contract(kind, enabled):
+    import copy
+    from dspy.utils import DummyLM
+
+    class CapableEngine(ScriptedEngine):
+        supports_function_calling = enabled
+        supports_reasoning = enabled
+        supports_response_schema = enabled
+        supported_params = {"response_format", "tools", "reasoning_effort"} if enabled else set()
+
+    class LegacyLM(dspy.BaseLM):
+        @property
+        def supports_function_calling(self):
+            return enabled
+
+        @property
+        def supports_reasoning(self):
+            return enabled
+
+        @property
+        def supports_response_schema(self):
+            return enabled
+
+        @property
+        def supported_params(self):
+            return {"response_format", "tools", "reasoning_effort"} if enabled else set()
+
+        def forward(self, prompt=None, messages=None, **kwargs):
+            pytest.fail("capability inspection must not invoke inference")
+
+    if kind == "dummy":
+        raw = DummyLM([{"answer": "ok"}])
+    elif kind == "custom":
+        raw = dspy.LM("openai/offline", engine=CapableEngine([]), cache=False)
+    else:
+        raw = LegacyLM("offline", cache=False)
+    runtime = runtime_module().ProviderRuntime()
+    guarded = runtime.wrap(raw, "defender")
+    for lm in (guarded, guarded.copy(), copy.deepcopy(guarded)):
+        assert lm.runtime is runtime
+        assert lm.history is raw.history
+        assert lm.supported_params == raw.supported_params
+        assert lm.supports_response_schema == raw.supports_response_schema
+        assert lm.supports_function_calling == raw.supports_function_calling
+        assert lm.supports_reasoning == raw.supports_reasoning
+    assert runtime.attempts == [] and raw.history == []
+
+
 def test_parallel_evaluator_swallowing_still_only_makes_one_provider_attempt():
     module = runtime_module()
     runtime = module.ProviderRuntime()
