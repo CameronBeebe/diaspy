@@ -15,7 +15,8 @@ dependencies = [
     "aiohttp>=3.9.0",
     "litellm>=1.50.0",
 ]
-license = { text = "Copyright (c) 2023 The SciPhi Initiative, LLC. All rights reserved." }
+license = "MIT"
+license-files = ["LICENSE"]
 
 [project.scripts]
 diaspy = "diaspy.cli:main"
@@ -55,5 +56,5 @@ venvPath = "."
 venv = ".venv"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
