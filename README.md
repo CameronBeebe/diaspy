@@ -120,9 +120,9 @@ The Python modules `diaspy.agents`, `diaspy.responders`, `diaspy.signatures` and
 configured DSPy LM. Legacy demos are not the stage-zero experiment, and pilot
 stages/other benchmark adapters are not validated for real experiments.
 
-## Rights
+## License
 
-Copyright The SciPhi Initiative, LLC. All rights reserved. This repository's
-proprietary code is not licensed for external use without permission. The
-shipped HotpotQA fixture retains its separate source attribution and CC BY-SA
-4.0 license metadata.
+Copyright (c) 2023-2026 The SciPhi Initiative, LLC. Released under the
+[MIT License](LICENSE). The shipped HotpotQA fixture is not covered by the MIT
+License; it retains its separate source attribution and CC BY-SA 4.0 license
+metadata.
