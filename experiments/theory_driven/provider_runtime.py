@@ -370,6 +370,24 @@ class GuardedLM(dspy.BaseLM):
     def __getattr__(self, name):
         return getattr(self._lm, name)
 
+    # BaseLM defines these properties, so __getattr__ cannot delegate them.
+    # Forward adapter hints only; inference must still enter runtime.call.
+    @property
+    def supports_function_calling(self) -> bool:
+        return self._lm.supports_function_calling
+
+    @property
+    def supports_reasoning(self) -> bool:
+        return self._lm.supports_reasoning
+
+    @property
+    def supports_response_schema(self) -> bool:
+        return self._lm.supports_response_schema
+
+    @property
+    def supported_params(self) -> set[str]:
+        return self._lm.supported_params
+
     def __call__(self, prompt=None, *, messages=None, **kwargs):
         return self.runtime.call(self._lm, self.role, prompt, messages, kwargs)
 
