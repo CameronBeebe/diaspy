@@ -26,10 +26,11 @@ from experiments.theory_driven.config.budget_tracker import BudgetTracker, Unifi
 class Rebuttal(BaseModel):
     """An argument about a refutation, not a numeric confidence estimate."""
 
-    refutation_index: int
-    stance: Literal["concede", "contest"]
-    argument: str
-    protected_ids: list[int]
+    refutation_index: int = Field(description="Zero-based index of the refutation addressed.")
+    stance: Literal["concede", "contest"] = Field(description="Whether to concede or contest this refutation.")
+    argument: str = Field(description="A concise evidence-grounded argument; avoid repeating the full feedback.")
+    protected_ids: list[int] = Field(
+        description="Numbered example IDs the proposed fix might endanger. Required; use [] if none.")
 
 
 class Defense(dspy.Signature):
@@ -41,6 +42,9 @@ class Defense(dspy.Signature):
     demonstrated reasoning errors. Preserve the task's output contract. Do not invent
     requirements or missing evidence. Cite numbered examples the proposed fix might
     endanger. Return an empty list if there are no refutations to address.
+    Every rebuttal must include refutation_index, stance, argument, and protected_ids.
+    Use protected_ids: [] if no numbered examples are cited; never omit the field.
+    Keep each argument concise without repeating the full feedback.
     """
 
     current_instruction: str = dspy.InputField()
